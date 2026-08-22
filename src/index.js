@@ -339,14 +339,18 @@ export function apply(ctx) {
         body: JSON.stringify(body || {})
       }).then(function (r) { return r.json() })
     }
+    // 背景装饰层：三层模糊蓝光晕球 + 点阵网格（还原 harness 官网 hero 视觉）
+    function decorHtml() {
+      return '<div class="wg-orb wg-o1"></div><div class="wg-orb wg-o2"></div><div class="wg-orb wg-o3"></div><div class="wg-grid"></div>'
+    }
     function cardHtml(state) {
       if (state === 'verify') {
-        return '<div class="wg-card wg-center"><span class="wg-spin wg-spin-lg"></span><div class="wg-wait">正在验证登录会话…</div></div>'
+        return decorHtml() + '<div class="wg-frame"><div class="wg-card wg-center"><span class="wg-spin wg-spin-lg"></span><div class="wg-wait">正在验证登录会话…</div></div></div>'
       }
       if (state === 'offline') {
-        return '<div class="wg-card wg-center"><div class="wg-wait">无法连接认证服务</div><button type="button" class="wg-retry">重试</button></div>'
+        return decorHtml() + '<div class="wg-frame"><div class="wg-card wg-center"><div class="wg-wait">无法连接认证服务</div><button type="button" class="wg-retry">重试</button></div></div>'
       }
-      return '<div class="wg-card">'
+      return decorHtml() + '<div class="wg-frame"><div class="wg-card">'
         + '<div class="wg-logo">' + LOGO_SVG + '<span class="wg-title">DeepSeek</span></div>'
         + '<div class="wg-sub">Harness 控制台 · 账号登录</div>'
         + '<label class="wg-label" for="wg-user">用户名</label>'
@@ -356,7 +360,7 @@ export function apply(ctx) {
         + '<button type="button" class="wg-btn" id="wg-go">登 录</button>'
         + '<div class="wg-err"></div>'
         + '<div class="wg-foot">登录会话有效期 12 小时<br />后台任务持续运行，不受登出影响</div>'
-        + '</div>'
+        + '</div></div>'
     }
     function bindLoginForm(container, onSuccess) {
       const btn = container.querySelector('#wg-go')
@@ -470,34 +474,50 @@ export function apply(ctx) {
 
   // ---------- 注册路由与页面注入 ----------
   if (web) {
+    // 视觉基调取自 deepseek.com/harness：炭黑底 + 三层模糊蓝光晕（screen 混合）
+    // + 点阵网格遮罩 + 玻璃拟态卡片 + 品牌蓝 #4d6bfe + 旋转渐变描边
     const GATE_CSS = [
-      '#wg-gate{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:"Segoe UI",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:radial-gradient(1100px 700px at 75% -10%,rgba(77,107,254,.30),transparent 60%),radial-gradient(900px 650px at -10% 110%,rgba(122,92,255,.20),transparent 55%),linear-gradient(160deg,#0b1023 0%,#111a3d 55%,#0c1230 100%);color:#e8ecf8}',
-      '#wg-gate .wg-card{width:370px;max-width:calc(100vw - 40px);padding:38px 36px 26px;border-radius:20px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.09);box-shadow:0 24px 80px rgba(0,0,0,.45);backdrop-filter:blur(14px)}',
+      '#wg-gate{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:"Segoe UI",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#1f2126;color:#e8ecf8;overflow:hidden}',
+      '#wg-gate::before{content:"";position:absolute;inset:0;z-index:0;background:linear-gradient(180deg,#17181d 0%,#1f2126 45%,#181a1f 100%)}',
+      '#wg-gate .wg-orb{position:absolute;z-index:0;border-radius:50%;mix-blend-mode:screen;pointer-events:none}',
+      '#wg-gate .wg-o1{width:min(64vw,780px);height:min(64vw,780px);top:-24%;left:-15%;background:radial-gradient(circle,#1A3870 0%,transparent 70%);filter:blur(80px);animation:wgDrift1 21s ease-in-out infinite alternate}',
+      '#wg-gate .wg-o2{width:min(58vw,720px);height:min(58vw,720px);bottom:-30%;right:-17%;background:radial-gradient(ellipse at center,#2D5F9E 0%,#1A3870 42%,transparent 72%);filter:blur(95px);animation:wgDrift2 17s ease-in-out infinite alternate}',
+      '#wg-gate .wg-o3{width:min(36vw,460px);height:min(36vw,460px);top:9%;right:13%;background:radial-gradient(circle,#4A8AC4 0%,#2D5F9E 32%,transparent 70%);filter:blur(65px);opacity:.85;animation:wgDrift3 13s ease-in-out infinite alternate}',
+      '#wg-gate .wg-grid{position:absolute;inset:0;z-index:0;background-image:radial-gradient(rgba(255,255,255,.055) 1px,transparent 1.4px);background-size:26px 26px;-webkit-mask-image:radial-gradient(ellipse 74% 70% at 50% 44%,#000 22%,transparent 78%);mask-image:radial-gradient(ellipse 74% 70% at 50% 44%,#000 22%,transparent 78%);pointer-events:none}',
+      '#wg-gate .wg-frame{position:relative;z-index:2;width:372px;max-width:calc(100vw - 40px);padding:1px;border-radius:22px;overflow:hidden}',
+      '#wg-gate .wg-frame::before{content:"";position:absolute;inset:-60%;background:conic-gradient(from 0deg,rgba(77,107,254,0) 0deg,rgba(77,107,254,.55) 55deg,rgba(103,158,254,.32) 115deg,rgba(26,56,112,0) 175deg,rgba(77,107,254,0) 360deg);animation:wgSpin 5.5s linear infinite}',
+      '#wg-gate .wg-card{position:relative;z-index:1;border-radius:21px;padding:38px 36px 26px;background:rgba(24,26,31,.82);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.07);box-shadow:0 30px 90px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.05);animation:wgRise .55s cubic-bezier(.22,.9,.32,1) both}',
       '#wg-gate .wg-logo{display:flex;align-items:center;justify-content:center;gap:11px;margin-bottom:4px}',
       '#wg-gate .wg-title{font-size:23px;font-weight:700;color:#fff;letter-spacing:.2px}',
-      '#wg-gate .wg-sub{text-align:center;font-size:13px;color:#93a0c4;margin:6px 0 24px}',
-      '#wg-gate .wg-label{display:block;font-size:12px;color:#aab4d4;margin:14px 0 6px}',
-      '#wg-gate .wg-input{box-sizing:border-box;width:100%;height:44px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;font-size:14px;outline:none;transition:border-color .15s,box-shadow .15s,background .15s;font-family:inherit}',
-      '#wg-gate .wg-input:focus{border-color:#4d6bfe;background:rgba(255,255,255,.09);box-shadow:0 0 0 3px rgba(77,107,254,.25)}',
-      '#wg-gate .wg-btn{margin-top:24px;width:100%;height:44px;border:none;border-radius:10px;background:linear-gradient(135deg,#4d6bfe,#7a5cff);color:#fff;font-size:15px;font-weight:600;cursor:pointer;transition:transform .15s,box-shadow .15s,opacity .15s;display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit}',
-      '#wg-gate .wg-btn:hover{transform:translateY(-1px);box-shadow:0 10px 24px rgba(77,107,254,.35)}',
-      '#wg-gate .wg-btn:disabled{opacity:.65;cursor:not-allowed;transform:none}',
-      '#wg-gate .wg-err{min-height:18px;margin-top:12px;text-align:center;font-size:12.5px;color:#ff8080}',
-      '#wg-gate .wg-foot{margin-top:14px;text-align:center;font-size:11.5px;color:#6c7899;line-height:1.8}',
-      '#wg-gate .wg-wait{margin-top:18px;text-align:center;font-size:13px;color:#93a0c4}',
-      '#wg-gate .wg-spin{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;animation:wgRot .8s linear infinite;display:inline-block}',
+      '#wg-gate .wg-sub{text-align:center;font-size:13px;color:rgba(158,170,196,.85);margin:6px 0 24px}',
+      '#wg-gate .wg-label{display:block;font-size:12px;color:rgba(170,180,212,.75);margin:14px 0 6px}',
+      '#wg-gate .wg-input{box-sizing:border-box;width:100%;height:44px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.045);color:#fff;font-size:14px;outline:none;transition:border-color .18s,box-shadow .18s,background .18s;font-family:inherit}',
+      '#wg-gate .wg-input:focus{border-color:#4d6bfe;background:rgba(77,107,254,.08);box-shadow:0 0 0 3px rgba(77,107,254,.22)}',
+      '#wg-gate .wg-btn{margin-top:24px;width:100%;height:44px;border:none;border-radius:10px;background:linear-gradient(135deg,#4d6bfe,#3a65c2);color:#fff;font-size:15px;font-weight:600;cursor:pointer;transition:transform .16s,box-shadow .16s,filter .16s;display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit}',
+      '#wg-gate .wg-btn:hover{transform:translateY(-1px);filter:brightness(1.08);box-shadow:0 10px 26px rgba(77,107,254,.38)}',
+      '#wg-gate .wg-btn:disabled{opacity:.65;cursor:not-allowed;transform:none;filter:none}',
+      '#wg-gate .wg-err{min-height:18px;margin-top:12px;text-align:center;font-size:12.5px;color:#ff8585}',
+      '#wg-gate .wg-foot{margin-top:14px;text-align:center;font-size:11.5px;color:rgba(148,160,186,.6);line-height:1.8}',
+      '#wg-gate .wg-wait{margin-top:18px;text-align:center;font-size:13px;color:rgba(158,170,196,.85)}',
+      '#wg-gate .wg-spin{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.28);border-top-color:#fff;animation:wgRot .8s linear infinite;display:inline-block}',
       '#wg-gate .wg-spin-lg{width:34px;height:34px;border-width:3px}',
       '#wg-gate .wg-center{display:flex;flex-direction:column;align-items:center;padding:46px 52px}',
-      '#wg-gate .wg-retry{margin-top:18px;padding:8px 26px;border-radius:9px;border:1px solid rgba(77,107,254,.6);background:transparent;color:#9db1ff;font-size:13px;cursor:pointer;font-family:inherit}',
+      '#wg-gate .wg-retry{margin-top:18px;padding:8px 26px;border-radius:9px;border:1px solid rgba(77,107,254,.6);background:transparent;color:#9db1ff;font-size:13px;cursor:pointer;font-family:inherit;transition:background .15s}',
       '#wg-gate .wg-retry:hover{background:rgba(77,107,254,.15)}',
-      '.wg-chip{position:fixed;right:14px;bottom:14px;z-index:2147483647;display:flex;align-items:center;height:30px;padding:0 13px;border-radius:15px;background:rgba(13,19,48,.88);border:1px solid rgba(255,255,255,.12);color:#aab4d4;font-size:12px;cursor:pointer;opacity:.4;transition:opacity .15s;font-family:inherit}',
+      '.wg-chip{position:fixed;right:14px;bottom:14px;z-index:2147483647;display:flex;align-items:center;height:30px;padding:0 13px;border-radius:15px;background:rgba(24,26,31,.88);border:1px solid rgba(255,255,255,.1);color:#aab4d4;font-size:12px;cursor:pointer;opacity:.4;transition:opacity .15s;font-family:inherit;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}',
       '.wg-chip:hover{opacity:1}',
+      '@keyframes wgSpin{to{transform:rotate(360deg)}}',
+      '@keyframes wgDrift1{from{transform:translate(0,0) scale(1)}to{transform:translate(64px,44px) scale(1.12)}}',
+      '@keyframes wgDrift2{from{transform:translate(0,0) scale(1)}to{transform:translate(-56px,-46px) scale(1.08)}}',
+      '@keyframes wgDrift3{from{transform:translate(0,0) scale(1)}to{transform:translate(-38px,32px) scale(.9)}}',
+      '@keyframes wgRise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}',
       '@keyframes wgShake{0%,100%{transform:translateX(0)}20%{transform:translateX(-7px)}40%{transform:translateX(7px)}60%{transform:translateX(-4px)}80%{transform:translateX(4px)}}',
       '@keyframes wgRot{to{transform:rotate(360deg)}}',
-      '.wg-shake{animation:wgShake .38s ease}'
+      '.wg-shake{animation:wgShake .38s ease}',
+      '@media (prefers-reduced-motion:reduce){#wg-gate *,#wg-gate *::before{animation:none!important}}'
     ].join('\n')
 
-    const LOGO_SVG = '<svg width="34" height="34" viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="wgg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4d6bfe"/><stop offset="1" stop-color="#7a5cff"/></linearGradient></defs><path fill="url(#wgg)" d="M5 27C5 17.6 12.8 11 23 11c7.6 0 13.9 4 16.4 10.2l4.1-1.9-1.8 9.3c.2 1 .3 2 .3 3.1h-6.6c-2.3 3.9-7 6.3-12.4 6.3C13.6 38 5 33.6 5 27z"/><circle cx="32.2" cy="22.5" r="1.9" fill="#0b1023"/></svg>'
+    const LOGO_SVG = '<svg width="34" height="34" viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="wgg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4d6bfe"/><stop offset="1" stop-color="#679efe"/></linearGradient></defs><path fill="url(#wgg)" d="M5 27C5 17.6 12.8 11 23 11c7.6 0 13.9 4 16.4 10.2l4.1-1.9-1.8 9.3c.2 1 .3 2 .3 3.1h-6.6c-2.3 3.9-7 6.3-12.4 6.3C13.6 38 5 33.6 5 27z"/><circle cx="32.2" cy="22.5" r="1.9" fill="#0b1023"/></svg>'
 
     // 结构化 index 注入：每次渲染 index.html 时都会触发本监听并读取当前行
     ctx.on('webserver/index-inject', function (table) {
