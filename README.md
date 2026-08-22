@@ -66,6 +66,47 @@ dsh plugin --profile web add dsh-webgate
 
 诊断接口：`GET /auth/api/health` 返回服务可用性与用户库状态。
 
+## 启用 / 停用 / 卸载（防锁死指南）
+
+> 建议：先用**动态插件模式**试用，确认满意后再考虑持久安装。
+
+### 动态插件模式（不落盘，随时可撤）
+
+在支持动态插件的 DSH 会话中，把 [`dynamic/webgate.host.js`](dynamic/webgate.host.js) 的内容作为 `code.host` 交给 `cordis_define`，再 `cordis_run` 即可。此模式：
+
+- **不写入任何配置文件**，`~/.dsh/profiles/<profile>/cordis.patch.yml` 保持原样；
+- **dsh 进程重启后门禁自动消失**，无需任何清理操作；
+- 随时让 Agent 执行 `cordis_stop <pluginId>` 立即停用，页面立刻恢复原样（插件定义保留，一条命令可再次启用）。
+
+### npm 安装版的停用与卸载
+
+```bash
+dsh plugin --profile web remove dsh-webgate
+```
+
+### 手动 patch 行的停用与卸载
+
+编辑 `~/.dsh/profiles/web/cordis.patch.yml`，将插件行加上 `disabled: true`（保留配置停用）或整行删除（彻底卸载），重启 dsh 生效：
+
+```yaml
+- insert:
+    - id: webgate
+      name: dsh-webgate
+      disabled: true   # 停用；或删除整个条目卸载
+```
+
+### 忘记密码怎么办
+
+1. 打开 `$DSH_HOME/.credentials.yaml`（默认 `~/.dsh/.credentials.yaml`）；
+2. 删除 `records:` 段下 `webgate/users:` 的整段记录（**其他内容一律不动**）；
+3. 重启 dsh —— 插件启动时发现没有用户，会重新引导初始账号 `admin / admin1234`。
+
+> 该文件里同时保存着 API Key 等其他凭据，只删 `webgate/users` 那一段即可，其余行请保持原样。
+
+### 兜底原则
+
+本插件只注册自己的路由/监听/命令，除上述一条凭据记录外不修改任何 Harness 数据。无论出现何种异常，按上面任一方式停用插件并重启 dsh，即可完全恢复到安装前状态。
+
 ## 工作原理
 
 ```

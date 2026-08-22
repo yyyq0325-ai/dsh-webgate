@@ -60,6 +60,36 @@ Change it immediately after logging in:
 
 Health probe: `GET /auth/api/health`.
 
+## Enable / disable / uninstall (lockout-safe guide)
+
+> Tip: try the **dynamic-plugin mode** first; install permanently only after you are happy.
+
+### Dynamic plugin mode (nothing persisted)
+
+Paste the contents of [`dynamic/webgate.host.js`](dynamic/webgate.host.js) as `code.host` into `cordis_define`, then `cordis_run`. In this mode:
+
+- **no configuration file is touched** — your profile patch file stays untouched;
+- **the gate disappears automatically when the dsh process restarts**;
+- the agent can stop it anytime with `cordis_stop <pluginId>` and the page returns to stock instantly (definitions are kept, one command re-enables).
+
+### Disable/uninstall the installed package
+
+```bash
+dsh plugin --profile web remove dsh-webgate
+```
+
+### Disable/uninstall a manual patch row
+
+In `~/.dsh/profiles/web/cordis.patch.yml`, add `disabled: true` to the row (keep config) or delete the row (full uninstall), then restart dsh.
+
+### Forgot the password?
+
+1. Open `$DSH_HOME/.credentials.yaml` (default `~/.dsh/.credentials.yaml`);
+2. Delete the whole `webgate/users:` entry under `records:` (touch nothing else);
+3. Restart dsh — the plugin finds no users and bootstraps `admin / admin1234` again.
+
+> The same file also holds your API keys; only remove the `webgate/users` block.
+
 ## How it works
 
 The plugin registers `/auth/api/*` routes (login / session / logout / health) on the harness web server and pushes a self-contained guard script into every served `index.html`. Passwords are stored as `PBKDF2-HMAC-SHA256` hashes with per-user random salts and compared in constant time. The user database is one credentials grant record (`webgate/users`) whose payload is a JSON *string* — primitives cross the dynamic-plugin sandbox boundary safely, unlike realm-specific plain objects.
