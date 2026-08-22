@@ -1,0 +1,50 @@
+{
+  "name": "dsh-webgate",
+  "description": "Login gate for the DeepSeek Harness web GUI: username/password entry page (DeepSeek style), 12-hour session tokens, slash commands for user management. Background tasks keep running while logged out.",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./dynamic/webgate.host.js": "./dynamic/webgate.host.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.1.1-rc.1"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "src",
+    "dynamic",
+    "scripts",
+    "cordis.patch.yml",
+    "README.md",
+    "README_EN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:dynamic": "node scripts/build-dynamic.mjs",
+    "test": "node scripts/crypto-selftest.mjs && node scripts/check.mjs && node scripts/browsersim.test.mjs",
+    "verify:live": "pwsh -File scripts/verify-webgate.ps1"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "auth",
+    "login",
+    "webgate"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-name/dsh-webgate.git"
+  }
+}

@@ -1,0 +1,10 @@
+# WebGate bundle patch：把本包的 Host 插件行插入 web profile。
+#
+# 通过官方 CLI 安装时（dsh plugin --profile web add dsh-webgate），
+# 安装命令会依据 package.json 的 dsh.bundle.patch 声明自动合并本补丁；
+# 也可以手动把下面的 insert 行复制进 profile 的 cordis.patch.yml。
+#
+# 可选配置：无。所有行为开箱即用，初始管理员账号见 README。
+- insert:
+    - id: webgate
+      name: dsh-webgate
