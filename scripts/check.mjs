@@ -91,9 +91,10 @@ async function runSuite(tag, plugin) {
       end(b) { this.body = b || '' },
     }
   }
-  function makeReq(obj) {
+  function makeReq(obj, headers) {
     return {
       method: 'POST',
+      headers: headers || {},
       on(ev, cb) {
         if (ev === 'data') setTimeout(() => cb(Buffer.from(JSON.stringify(obj || {}))), 0)
         if (ev === 'end') setTimeout(cb, 8)
@@ -101,11 +102,25 @@ async function runSuite(tag, plugin) {
     }
   }
 
-  // 错误密码
+  // 错误密码（默认中文）
   let res = makeRes()
   await routes.get('exact /auth/api/login')(makeReq({ username: 'admin', password: 'definitely-wrong' }), res)
   const bad = JSON.parse(res.body)
-  expect(`[${tag}] 错误密码被拒绝`, bad.ok === false && bad.message === '用户名或密码错误')
+  expect(`[${tag}] 错误密码被拒绝（默认中文）`, bad.ok === false && bad.message === '用户名或密码错误')
+
+  // 错误密码（Accept-Language: en → 英文文案）
+  res = makeRes()
+  await routes.get('exact /auth/api/login')(makeReq({ username: 'admin', password: 'definitely-wrong' }, { 'accept-language': 'en-US,en;q=0.9' }), res)
+  const badEn = JSON.parse(res.body)
+  expect(`[${tag}] 错误提示跟随 Accept-Language`, badEn.ok === false && badEn.message === 'Incorrect username or password')
+
+  // 独立登录页标题本地化
+  res = makeRes()
+  await routes.get('exact /auth/page')({ method: 'GET', headers: {}, on() { } }, res)
+  expect(`[${tag}] /auth/page zh 标题`, res.body.includes('登录</title>'))
+  res = makeRes()
+  await routes.get('exact /auth/page')({ method: 'GET', headers: { accept: 'text/html', 'accept-language': 'en' }, on() { } }, res)
+  expect(`[${tag}] /auth/page en 标题`, res.body.includes('Sign in</title>'))
 
   // 正确密码 → 12h 令牌
   res = makeRes()

@@ -248,63 +248,81 @@ export function apply(ctx) {
   }
   function delay(ms) { return ctx.timeout(ms) }
 
-  // ---------- 用户管理核心（命令与模型工具共用） ----------
+  // ---------- API 文案（按 Accept-Language 协商，缺省中文） ----------
+  const MSG = {
+    zh: {
+      needBoth: '请输入用户名和密码',
+      starting: '认证服务初始化中，请稍后再试',
+      badCreds: '用户名或密码错误'
+    },
+    en: {
+      needBoth: 'Please enter your username and password',
+      starting: 'Authentication is initializing, please try again shortly',
+      badCreds: 'Incorrect username or password'
+    }
+  }
+  function localeOf(req) {
+    const al = String((req && req.headers && req.headers['accept-language']) || '')
+    return /\ben\b/i.test(al) ? 'en' : 'zh'
+  }
+
+  // ---------- 用户管理核心（命令与模型工具共用；输出双语行内文案） ----------
   function validateUsername(u) {
-    if (!/^[A-Za-z0-9_.-]{2,32}$/.test(u)) return '用户名需为 2-32 位字母、数字、点、下划线或短横线'
+    if (!/^[A-Za-z0-9_.-]{2,32}$/.test(u)) return '用户名需为 2-32 位字母、数字、点、下划线或短横线 | Username must be 2-32 chars: letters, digits, dot, underscore or dash'
     return null
   }
   function validatePassword(p) {
-    if (typeof p !== 'string' || p.length < 6 || p.length > 128) return '密码长度需为 6-128 位'
+    if (typeof p !== 'string' || p.length < 6 || p.length > 128) return '密码长度需为 6-128 位 | Password length must be 6-128 characters'
     return null
   }
   function addUserCore(username, password) {
     const u = String(username || '').trim()
     const err = validateUsername(u) || validatePassword(password)
     if (err) return Promise.resolve({ ok: false, message: err })
-    if (!usersCache) return Promise.resolve({ ok: false, message: '用户库尚未初始化，请稍后再试' })
-    if (usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」已存在' })
+    if (!usersCache) return Promise.resolve({ ok: false, message: '用户库尚未初始化，请稍后再试 | User store is not initialized yet, please retry' })
+    if (usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」已存在 | User "' + u + '" already exists' })
     const salt = randomHex(16)
     usersCache[u] = { hash: hashPassword(password, salt, PBKDF2_ITER), salt, iter: PBKDF2_ITER, createdAt: new Date().toISOString() }
     return persistUsers().then(function () {
       console.log('[webgate] 已添加用户: ' + u)
-      return { ok: true, message: '用户「' + u + '」添加成功' }
+      return { ok: true, message: '用户「' + u + '」添加成功 | User "' + u + '" added' }
     }).catch(function (e) {
       delete usersCache[u]
       console.error('[webgate] 写入用户失败：' + ((e && e.message) || e))
-      return { ok: false, message: '写入用户库失败（详见 Host 日志）' }
+      return { ok: false, message: '写入用户库失败，详见 Host 日志 | Failed to write user store, see host logs' }
     })
   }
   function passwdCore(username, password) {
     const u = String(username || '').trim()
     const err = validateUsername(u) || validatePassword(password)
     if (err) return Promise.resolve({ ok: false, message: err })
-    if (!usersCache || !usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」不存在' })
+    if (!usersCache || !usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」不存在 | User "' + u + '" does not exist' })
     const salt = randomHex(16)
     const prev = usersCache[u]
     usersCache[u] = { hash: hashPassword(password, salt, PBKDF2_ITER), salt, iter: PBKDF2_ITER, createdAt: prev.createdAt }
     return persistUsers().then(function () {
       revokeUserTokens(u)
       console.log('[webgate] 已修改用户密码: ' + u)
-      return { ok: true, message: '用户「' + u + '」密码已修改，该用户现有登录会话已全部失效' }
+      return { ok: true, message: '用户「' + u + '」密码已修改，其现有登录会话已全部失效 | Password updated for "' + u + '", all their sessions were revoked' }
     }).catch(function (e) {
       usersCache[u] = prev
       console.error('[webgate] 密码写入失败：' + ((e && e.message) || e))
-      return { ok: false, message: '写入用户库失败（详见 Host 日志）' }
+      return { ok: false, message: '写入用户库失败，详见 Host 日志 | Failed to write user store, see host logs' }
     })
   }
   function delUserCore(username) {
     const u = String(username || '').trim()
-    if (!usersCache || !usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」不存在' })
-    if (Object.keys(usersCache).length <= 1) return Promise.resolve({ ok: false, message: '至少需要保留一个用户' })
+    if (!usersCache || !usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」不存在 | User "' + u + '" does not exist' })
+    if (Object.keys(usersCache).length <= 1) return Promise.resolve({ ok: false, message: '至少需要保留一个用户 | At least one user must remain' })
     const prev = usersCache[u]
     delete usersCache[u]
     return persistUsers().then(function () {
       revokeUserTokens(u)
-      return { ok: true, message: '用户「' + u + '」已删除' }
+      return { ok: true, message: '用户「' + u + '」已删除 | User "' + u + '" deleted' }
     }).catch(function (e) {
       usersCache[u] = prev
       console.error('[webgate] 删除用户写入失败：' + ((e && e.message) || e))
-      return { ok: false, message: '写入用户库失败（详见 Host 日志）' }
+      return { ok: false, message: '写入用户库失败，详见 Host 日志 | Failed to write user store, see host logs' }
     })
   }
   function listUsersCore() {
@@ -328,6 +346,66 @@ export function apply(ctx) {
     function sv(k, v) { try { window.localStorage.setItem(K + '.' + k, String(v)) } catch (e) { } }
     function rmv(k) { try { window.localStorage.removeItem(K + '.' + k) } catch (e) { } }
 
+    // ---------- 双语文案（默认中文；英文浏览器自动切换，可手动覆盖并记忆） ----------
+    const LS = {
+      zh: {
+        sub: 'Harness 控制台 · 账号登录',
+        user: '用户名', pass: '密码',
+        login: '登 录', loggingIn: '登录中…',
+        needBoth: '请输入用户名和密码',
+        netErr: '网络错误，请重试', loginFailed: '登录失败',
+        verifying: '正在验证登录会话…',
+        offline: '无法连接认证服务', retry: '重试',
+        foot1: '登录会话有效期 12 小时', foot2: '后台任务持续运行，不受登出影响',
+        hoursLeft: '剩余约 {n} 小时', signout: '退出',
+        toggle: 'EN'
+      },
+      en: {
+        sub: 'Harness Console · Sign in',
+        user: 'Username', pass: 'Password',
+        login: 'Sign in', loggingIn: 'Signing in…',
+        needBoth: 'Please enter your username and password',
+        netErr: 'Network error, please retry', loginFailed: 'Sign-in failed',
+        verifying: 'Verifying your session…',
+        offline: 'Cannot reach the auth service', retry: 'Retry',
+        foot1: 'Sessions last 12 hours', foot2: 'Background tasks keep running while signed out',
+        hoursLeft: '~{n} h left', signout: 'Sign out',
+        toggle: '中文'
+      }
+    }
+    function detectLang() {
+      try {
+        const saved = window.localStorage.getItem(K + '.lang')
+        if (saved === 'en' || saved === 'zh') return saved
+      } catch (e) { }
+      const nav = (typeof navigator !== 'undefined' && navigator.language) || 'zh'
+      return /^en/i.test(String(nav)) ? 'en' : 'zh'
+    }
+    let LANG = detectLang()
+    function t(k, n) {
+      const s = ((LS[LANG] && LS[LANG][k]) || LS.zh[k] || k)
+      return n === undefined ? s : String(s).replace('{n}', String(n))
+    }
+    // 切换语言：保存偏好 → 重新渲染当前卡片（尽量保留已输入内容）
+    function setLang(lang, rerender) {
+      LANG = lang === 'en' ? 'en' : 'zh'
+      sv('lang', LANG)
+      if (typeof rerender === 'function') rerender()
+    }
+    // 绑定语言切换链接；返回当前输入值以便重渲染后恢复
+    function bindLangToggle(container, rerender) {
+      const el = container.querySelector('.wg-lang')
+      if (!el) return
+      el.textContent = t('toggle')
+      el.addEventListener('click', function () {
+        container.__wgSaved = {
+          u: (container.querySelector('#wg-user') || {}).value || '',
+          p: (container.querySelector('#wg-pass') || {}).value || ''
+        }
+        setLang(LANG === 'zh' ? 'en' : 'zh', rerender)
+      })
+    }
+
     const st = document.createElement('style')
     st.textContent = GATE_CSS
     ;(document.head || document.documentElement).appendChild(st)
@@ -345,43 +423,44 @@ export function apply(ctx) {
     }
     function cardHtml(state) {
       if (state === 'verify') {
-        return decorHtml() + '<div class="wg-frame"><div class="wg-card wg-center"><span class="wg-spin wg-spin-lg"></span><div class="wg-wait">正在验证登录会话…</div></div></div>'
+        return decorHtml() + '<div class="wg-frame"><div class="wg-card wg-center"><span class="wg-spin wg-spin-lg"></span><div class="wg-wait">' + t('verifying') + '</div></div></div>'
       }
       if (state === 'offline') {
-        return decorHtml() + '<div class="wg-frame"><div class="wg-card wg-center"><div class="wg-wait">无法连接认证服务</div><button type="button" class="wg-retry">重试</button></div></div>'
+        return decorHtml() + '<div class="wg-frame"><div class="wg-card wg-center"><div class="wg-wait">' + t('offline') + '</div><button type="button" class="wg-retry">' + t('retry') + '</button></div></div>'
       }
       return decorHtml() + '<div class="wg-frame"><div class="wg-card">'
         + '<div class="wg-logo">' + LOGO_SVG + '<span class="wg-title">DeepSeek</span></div>'
-        + '<div class="wg-sub">Harness 控制台 · 账号登录</div>'
-        + '<label class="wg-label" for="wg-user">用户名</label>'
+        + '<div class="wg-sub">' + t('sub') + '</div>'
+        + '<label class="wg-label" for="wg-user">' + t('user') + '</label>'
         + '<input id="wg-user" class="wg-input" autocomplete="username" spellcheck="false" />'
-        + '<label class="wg-label" for="wg-pass">密码</label>'
+        + '<label class="wg-label" for="wg-pass">' + t('pass') + '</label>'
         + '<input id="wg-pass" class="wg-input" type="password" autocomplete="current-password" />'
-        + '<button type="button" class="wg-btn" id="wg-go">登 录</button>'
+        + '<button type="button" class="wg-btn" id="wg-go">' + t('login') + '</button>'
         + '<div class="wg-err"></div>'
-        + '<div class="wg-foot">登录会话有效期 12 小时<br />后台任务持续运行，不受登出影响</div>'
+        + '<div class="wg-foot">' + t('foot1') + '<br />' + t('foot2') + '</div>'
+        + '<div class="wg-langbar"><a href="javascript:void(0)" class="wg-lang"></a></div>'
         + '</div></div>'
     }
     function bindLoginForm(container, onSuccess) {
       const btn = container.querySelector('#wg-go')
       const u = container.querySelector('#wg-user')
       const p = container.querySelector('#wg-pass')
-      function setErr(t) {
+      function setErr(msg) {
         const e = container.querySelector('.wg-err')
-        if (e) e.textContent = t || ''
+        if (e) e.textContent = msg || ''
         const c = container.querySelector('.wg-card')
-        if (c && t) { c.classList.remove('wg-shake'); void c.offsetWidth; c.classList.add('wg-shake') }
+        if (c && msg) { c.classList.remove('wg-shake'); void c.offsetWidth; c.classList.add('wg-shake') }
       }
       function go() {
         const uv = (u.value || '').trim(), pv = p.value || ''
-        if (!uv || !pv) { setErr('请输入用户名和密码'); return }
+        if (!uv || !pv) { setErr(t('needBoth')); return }
         btn.disabled = true
-        btn.innerHTML = '<span class="wg-spin"></span> 登录中…'
+        btn.innerHTML = '<span class="wg-spin"></span> ' + t('loggingIn')
         api('login', { username: uv, password: pv }).then(function (d) {
           if (d && d.ok && d.token) onSuccess(d)
-          else { btn.disabled = false; btn.textContent = '登 录'; setErr((d && d.message) || '登录失败') }
+          else { btn.disabled = false; btn.textContent = t('login'); setErr((d && d.message) || t('loginFailed')) }
         }).catch(function () {
-          btn.disabled = false; btn.textContent = '登 录'; setErr('网络错误，请重试')
+          btn.disabled = false; btn.textContent = t('login'); setErr(t('netErr'))
         })
       }
       btn.addEventListener('click', go)
@@ -392,15 +471,23 @@ export function apply(ctx) {
     }
 
     if (MODE === 'page') {
-      document.body.setAttribute('style', 'margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b1023')
+      document.body.setAttribute('style', 'margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#1f2126')
       const pg = document.createElement('div')
       pg.id = 'wg-gate'
-      pg.innerHTML = cardHtml()
       document.body.appendChild(pg)
-      bindLoginForm(pg, function (d) {
-        sv('token', d.token); sv('exp', d.expiresAt)
-        location.href = '/'
-      })
+      function initPage() {
+        pg.innerHTML = cardHtml()
+        const saved = pg.__wgSaved || {}
+        bindLoginForm(pg, function (d) {
+          sv('token', d.token); sv('exp', d.expiresAt)
+          location.href = '/'
+        })
+        bindLangToggle(pg, initPage)
+        const iu = pg.querySelector('#wg-user'), ip = pg.querySelector('#wg-pass')
+        if (iu && saved.u) iu.value = saved.u
+        if (ip && saved.p) ip.value = saved.p
+      }
+      initPage()
       return
     }
 
@@ -418,18 +505,18 @@ export function apply(ctx) {
       const c = document.createElement('button')
       c.className = 'wg-chip'
       c.type = 'button'
-      c.setAttribute('title', 'WebGate 会话')
-      c.textContent = '🔒 ' + user + ' · 剩余约 ' + Math.max(0, Math.round((exp - Date.now()) / 3600000)) + ' 小时 · 退出'
+      c.setAttribute('title', 'WebGate')
+      c.textContent = '🔒 ' + user + ' · ' + t('hoursLeft', Math.max(0, Math.round((exp - Date.now()) / 3600000))) + ' · ' + t('signout')
       c.addEventListener('click', function () { doLogout(false) })
       document.documentElement.appendChild(c)
     }
     function doLogout(local) {
       stopWatch(); hideChip()
-      const t = lg('token')
+      const tok = lg('token')
       rmv('token'); rmv('exp')
-      if (!local && t) {
+      if (!local && tok) {
         try {
-          fetch('/auth/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: t }) })
+          fetch('/auth/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: tok }) })
         } catch (e) { }
       }
       location.reload()
@@ -442,16 +529,26 @@ export function apply(ctx) {
       }, 30000)
       showChip(user, exp)
     }
-    function showLogin(msg) {
+    function onSuccessSave(d) { sv('token', d.token); sv('exp', d.expiresAt); location.reload() }
+    function renderLogin() {
       root.innerHTML = cardHtml()
-      const setErr = bindLoginForm(root, function (d) { sv('token', d.token); sv('exp', d.expiresAt); location.reload() })
+      const setErr = bindLoginForm(root, onSuccessSave)
+      bindLangToggle(root, renderLogin)
+      const saved = root.__wgSaved || {}
+      const iu = root.querySelector('#wg-user'), ip = root.querySelector('#wg-pass')
+      if (iu && saved.u) iu.value = saved.u
+      if (ip && saved.p) ip.value = saved.p
+      return setErr
+    }
+    function showLogin(msg) {
+      const setErr = renderLogin()
       if (msg) setErr(msg)
     }
     function start() {
-      const t = lg('token')
-      if (!t) { showLogin(); return }
+      const tok = lg('token')
+      if (!tok) { showLogin(); return }
       root.innerHTML = cardHtml('verify')
-      api('session', { token: t }).then(function (d) {
+      api('session', { token: tok }).then(function (d) {
         if (d && d.ok && d.valid && d.username) {
           root.style.display = 'none'
           document.documentElement.style.overflow = ''
@@ -498,6 +595,12 @@ export function apply(ctx) {
       '#wg-gate .wg-btn:disabled{opacity:.65;cursor:not-allowed;transform:none;filter:none}',
       '#wg-gate .wg-err{min-height:18px;margin-top:12px;text-align:center;font-size:12.5px;color:#ff8585}',
       '#wg-gate .wg-foot{margin-top:14px;text-align:center;font-size:11.5px;color:rgba(148,160,186,.6);line-height:1.8}',
+      '#wg-gate .wg-langbar{display:flex;justify-content:flex-end;margin-top:6px}',
+      '#wg-gate .wg-lang{font-size:11px;color:#679efe;cursor:pointer;opacity:.85;font-family:inherit}',
+      '#wg-gate .wg-lang:hover{opacity:1;text-decoration:underline}',
+      '#wg-gate .wg-langbar{display:flex;justify-content:flex-end;margin-top:6px}',
+      '#wg-gate .wg-lang{font-size:11px;color:#679efe;cursor:pointer;opacity:.85;font-family:inherit}',
+      '#wg-gate .wg-lang:hover{opacity:1;text-decoration:underline}',
       '#wg-gate .wg-wait{margin-top:18px;text-align:center;font-size:13px;color:rgba(158,170,196,.85)}',
       '#wg-gate .wg-spin{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.28);border-top-color:#fff;animation:wgRot .8s linear infinite;display:inline-block}',
       '#wg-gate .wg-spin-lg{width:34px;height:34px;border-width:3px}',
@@ -534,9 +637,10 @@ export function apply(ctx) {
         kind: 'exact', path: '/auth/page',
         handler: async function (req, res) {
           try {
-            const html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/>'
+            const pl = localeOf(req)
+            const html = '<!doctype html><html lang="' + (pl === 'en' ? 'en' : 'zh-CN') + '"><head><meta charset="utf-8"/>'
               + '<meta name="viewport" content="width=device-width,initial-scale=1"/>'
-              + '<title>DeepSeek Harness · 登录</title></head><body>'
+              + '<title>DeepSeek Harness · ' + (pl === 'en' ? 'Sign in' : '登录') + '</title></head><body>'
               + '<scr' + 'ipt>(' + gateFactory.toString() + ')(' + JSON.stringify(GATE_CSS) + ',' + JSON.stringify(LOGO_SVG) + ',"page");</scr' + 'ipt>'
               + '</body></html>'
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
@@ -570,14 +674,15 @@ export function apply(ctx) {
         kind: 'exact', path: '/auth/api/login',
         handler: async function (req, res) {
           if (req.method !== 'POST') return sendJson(res, 405, { ok: false, message: 'method not allowed' })
+          const L = localeOf(req)
           const b = await readJsonBody(req)
           const u = String(b.username || '').trim(), p = typeof b.password === 'string' ? b.password : ''
-          if (!u || !p) return sendJson(res, 200, { ok: false, message: '请输入用户名和密码' })
-          if (!usersCache || Object.keys(usersCache).length === 0) return sendJson(res, 200, { ok: false, message: '认证服务初始化中，请稍后再试' })
+          if (!u || !p) return sendJson(res, 200, { ok: false, message: MSG[L].needBoth })
+          if (!usersCache || Object.keys(usersCache).length === 0) return sendJson(res, 200, { ok: false, message: MSG[L].starting })
           const rec = usersCache[u]
           let ok = false
           if (rec && rec.salt && rec.hash) ok = constantTimeEqual(hashPassword(p, rec.salt, rec.iter || PBKDF2_ITER), rec.hash)
-          if (!ok) { await delay(900); return sendJson(res, 200, { ok: false, message: '用户名或密码错误' }) }
+          if (!ok) { await delay(900); return sendJson(res, 200, { ok: false, message: MSG[L].badCreds }) }
           const tok = issueToken(u)
           console.log('[webgate] 用户登录成功: ' + u)
           sendJson(res, 200, { ok: true, token: tok, expiresAt: tokens[tok].exp, username: u })
@@ -618,12 +723,12 @@ export function apply(ctx) {
     ctx.effect(function () {
       return commandsSvc.register({
         name: 'useradd',
-        description: 'WebGate：添加 Web 登录用户。用法：/useradd <用户名> <密码>',
-        input: { hint: '<用户名> <密码>' },
+        description: 'WebGate：添加 Web 登录用户 · Add a web login user',
+        input: { hint: '<用户名 username> <密码 password>' },
         recordInput: false,
         handler: function (inv) {
           const parts = String(inv.rawInput || '').trim().split(/\s+/).filter(Boolean)
-          if (parts.length !== 2) return Promise.resolve(errRes('用法：/useradd <用户名> <密码>（密码至少 6 位）'))
+          if (parts.length !== 2) return Promise.resolve(errRes('用法 Usage：/useradd <用户名 username> <密码 password>（密码至少 6 位 / password ≥ 6 chars）'))
           return addUserCore(parts[0], parts[1]).then(function (r) { return r.ok ? okRes(r.message) : errRes(r.message) })
         }
       })
@@ -631,12 +736,12 @@ export function apply(ctx) {
     ctx.effect(function () {
       return commandsSvc.register({
         name: 'passwd',
-        description: 'WebGate：修改用户登录密码（该用户现有会话立即失效）。用法：/passwd <用户名> <新密码>',
-        input: { hint: '<用户名> <新密码>' },
+        description: 'WebGate：修改用户登录密码 · Change a web login password',
+        input: { hint: '<用户名 username> <新密码 new-password>' },
         recordInput: false,
         handler: function (inv) {
           const parts = String(inv.rawInput || '').trim().split(/\s+/).filter(Boolean)
-          if (parts.length !== 2) return Promise.resolve(errRes('用法：/passwd <用户名> <新密码>（新密码至少 6 位）'))
+          if (parts.length !== 2) return Promise.resolve(errRes('用法 Usage：/passwd <用户名 username> <新密码 new-password>（新密码至少 6 位 / ≥ 6 chars）'))
           return passwdCore(parts[0], parts[1]).then(function (r) { return r.ok ? okRes(r.message) : errRes(r.message) })
         }
       })
@@ -644,25 +749,25 @@ export function apply(ctx) {
     ctx.effect(function () {
       return commandsSvc.register({
         name: 'userlist',
-        description: 'WebGate：列出所有 Web 登录用户',
+        description: 'WebGate：列出所有 Web 登录用户 · List all web login users',
         handler: function () {
           const users = listUsersCore()
-          if (!users.length) return Promise.resolve(okRes('暂无用户'))
+          if (!users.length) return Promise.resolve(okRes('暂无用户 | No users yet'))
           const lines = users.map(function (u) {
-            return u.username + '　创建于 ' + (u.createdAt || '?') + '　活跃会话 ' + u.activeSessions
+            return '- ' + u.username + ' · created 创建于 ' + (u.createdAt || '?') + ' · active sessions 活跃会话: ' + u.activeSessions
           })
-          return Promise.resolve(okRes('共 ' + users.length + ' 个用户：\n' + lines.join('\n')))
+          return Promise.resolve(okRes('共 ' + users.length + ' 个用户 | ' + users.length + ' user(s):\n' + lines.join('\n')))
         }
       })
     })
     ctx.effect(function () {
       return commandsSvc.register({
         name: 'userdel',
-        description: 'WebGate：删除 Web 登录用户。用法：/userdel <用户名>',
-        input: { hint: '<用户名>' },
+        description: 'WebGate：删除 Web 登录用户 · Delete a web login user',
+        input: { hint: '<用户名 username>' },
         handler: function (inv) {
           const parts = String(inv.rawInput || '').trim().split(/\s+/).filter(Boolean)
-          if (parts.length !== 1) return Promise.resolve(errRes('用法：/userdel <用户名>'))
+          if (parts.length !== 1) return Promise.resolve(errRes('用法 Usage：/userdel <用户名 username>'))
           return delUserCore(parts[0]).then(function (r) { return r.ok ? okRes(r.message) : errRes(r.message) })
         }
       })
@@ -680,7 +785,7 @@ export function apply(ctx) {
   }
   regTool({
     name: 'webgate_user_list',
-    description: '列出 WebGate Web 登录用户：用户名、创建时间、活跃会话数。不包含密码。',
+    description: 'List WebGate web-login users (name, created time, active sessions; no passwords). 列出 WebGate 登录用户（不含密码）。',
     parameters: { type: 'object', properties: {}, required: [] },
     execute: async function () {
       return { users: listUsersCore() }
@@ -689,11 +794,11 @@ export function apply(ctx) {
       schema: { type: 'object', properties: { users: { type: 'array' } } },
       render: function (args, value) {
         const users = (value && value.users) || []
-        if (!users.length) return [{ type: 'text', text: '（无用户）' }]
+        if (!users.length) return [{ type: 'text', text: '无用户 | no users' }]
         return [{
           type: 'text',
           text: users.map(function (u) {
-            return '- ' + u.username + '（创建于 ' + (u.createdAt || '?') + '，活跃会话 ' + u.activeSessions + '）'
+            return '- ' + u.username + ' (created 创建于 ' + (u.createdAt || '?') + ', sessions 会话 ' + u.activeSessions + ')'
           }).join('\n')
         }]
       }
@@ -701,10 +806,10 @@ export function apply(ctx) {
   })
   regTool({
     name: 'webgate_user_add',
-    description: '添加一个 WebGate Web 登录用户。用户名 2-32 位字母/数字/点/下划线/短横线；密码 6-128 位。',
+    description: 'Add a WebGate web-login user. 添加一个 WebGate Web 登录用户。Username 用户名: 2-32 chars [A-Za-z0-9_.-]; password 密码: 6-128 chars.',
     parameters: {
       type: 'object',
-      properties: { username: { type: 'string', description: '用户名' }, password: { type: 'string', description: '密码（至少 6 位）' } },
+      properties: { username: { type: 'string', description: '用户名 / username' }, password: { type: 'string', description: '密码 / password (min 6 chars)' } },
       required: ['username', 'password']
     },
     execute: async function (args) {
@@ -717,10 +822,10 @@ export function apply(ctx) {
   })
   regTool({
     name: 'webgate_user_passwd',
-    description: '修改一个 WebGate 用户的登录密码；该用户现有的登录会话会立即失效。',
+    description: "Change a WebGate user's password; revokes their active sessions. 修改 WebGate 用户登录密码，并撤销其现有会话。",
     parameters: {
       type: 'object',
-      properties: { username: { type: 'string', description: '用户名' }, password: { type: 'string', description: '新密码（至少 6 位）' } },
+      properties: { username: { type: 'string', description: '用户名 / username' }, password: { type: 'string', description: '新密码 / new password (min 6 chars)' } },
       required: ['username', 'password']
     },
     execute: async function (args) {

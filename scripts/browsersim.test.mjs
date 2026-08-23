@@ -38,6 +38,8 @@ class El {
     this.value = ''; this.innerHTML = ''; this.textContent = ''; this.offsetWidth = 0; this.disabled = false
     this._qs = {}
   }
+  set innerHTML(v) { this._html = String(v) }
+  get innerHTML() { return this._html || '' }
   get className() { return [...this._cls].join(' ') }
   set className(v) { this._cls = new Set(String(v).split(/\s+/).filter(Boolean)) }
   get classList() {
@@ -88,10 +90,11 @@ function buildEnv(initialStorage, responder) {
     setInterval: (fn, ms) => { intervals.push({ fn, ms, id: ++iid }); return iid },
     clearInterval: id => { const i = intervals.findIndex(x => x.id === id); if (i >= 0) intervals.splice(i, 1) },
     setTimeout: (fn) => Promise.resolve().then(fn),
-    console: { log() { }, error() { } },
+    console: { log: (...a) => console.log('[vm]', ...a), error: (...a) => console.error('[vm]', ...a) },
   }
   sandbox.globalThis = sandbox
   const context = vm.createContext(sandbox)
+  process.on('unhandledRejection', r => console.log('[UNHANDLED]', (r && r.stack) || r))
   vm.runInContext(ROW, context, { filename: 'webgate-row.js' })
   return { storage, documentElement, intervals, docListeners, reloads: () => reloads }
 }
@@ -109,6 +112,20 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
   expect('A5 空提交显示错误', (() => { root.querySelector('#wg-go').click(); return true })())
   await tick()
   expect('A5b 错误文案出现', (root.querySelector('.wg-err').textContent || '').includes('请输入'))
+
+  // 国际化：默认中文（桩 DOM 不解析 innerHTML，改查渲染源码）
+  expect('A6 默认中文副标题', (root._html || '').includes('账号登录'))
+  expect('A7 默认中文按钮', (root._html || '').includes('>登 录</button>'))
+  const langLink = root.querySelector('.wg-lang')
+  expect('A8 语言切换链接显示 EN', !!langLink && langLink.textContent === 'EN')
+
+  // 点击切换 → 记忆偏好并重渲染为英文（输入值保留）
+  root.querySelector('#wg-user').value = 'someone'
+  langLink.click(); await tick()
+  expect('A9 切换后写入语言偏好', env.storage['dshWebgate.lang'] === 'en')
+  expect('A10 切换后按钮变英文', (root._html || '').includes('>Sign in</button>'))
+  expect('A11 重渲染保留已输入用户名', root.querySelector('#wg-user').value === 'someone')
+  expect('A12 切换链接显示 中文', root.querySelector('.wg-lang').textContent === '中文')
 
   // B: 登录失败 → 成功
   env = buildEnv(null, (url, opts) => {
@@ -180,6 +197,14 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
   failFetch = false
   root.querySelector('.wg-retry').click(); await tick()
   expect('F2 重试后会话恢复', root.style.display === 'none')
+
+  // G: 英文浏览器环境（localStorage 预设 lang=en）
+  env = buildEnv({ 'dshWebgate.lang': 'en' }, () => ({ ok: true, valid: false }))
+  await tick()
+  root = gateRoot(env)
+  expect('G1 英文界面按钮', (root._html || '').includes('>Sign in</button>'))
+  expect('G2 英文副标题', (root._html || '').includes('Harness Console · Sign in'))
+  expect('G3 切换链接显示 中文', root.querySelector('.wg-lang').textContent === '中文')
 
   console.log(failures === 0 ? 'ALL BROWSER CHECKS PASS' : failures + ' FAILURES')
   process.exit(failures === 0 ? 0 : 1)

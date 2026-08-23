@@ -12,6 +12,7 @@ Add a username/password gate to the [DeepSeek Harness](https://github.com/deepse
 - 🎨 **DeepSeek-style login page** — deep blue/purple gradient, glassmorphism card, brand-blue gradient button, whale badge SVG; standalone page at `/auth/page`
 - 🛠 **User management commands** — `/useradd`, `/passwd`, `/userlist`, `/userdel` (passwords never hit the session log), plus `webgate_user_*` model tools so your agent can manage accounts
 - 💾 **Persistent user store** — kept as a grant record inside `$DSH_HOME/.credentials.yaml`, restored automatically on plugin restart
+- 🌐 **Bilingual (Chinese default)** — one-click 中文/EN toggle on the login card (remembered locally); English browsers switch automatically; API messages follow the request's `Accept-Language`
 - 🧩 **Zero dependencies** — single-file pure JavaScript; PBKDF2-HMAC-SHA256 (20k iterations) implemented in-repo for sandboxes without `node:crypto`, validated against standard test vectors
 
 ## Install
@@ -50,6 +51,8 @@ Change it immediately after logging in:
 ```
 /passwd admin <your-new-password>
 ```
+
+UI language: use the 中文/EN link at the bottom of the login card; defaults to Chinese, English browsers switch automatically. The standalone `/auth/page` and all API messages are localized too (`Accept-Language`).
 
 | Command | Description |
 |---|---|

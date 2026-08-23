@@ -12,6 +12,7 @@
 - 🎨 **DeepSeek 官网风格登录页** — 深蓝紫渐变 + 毛玻璃卡片 + 品牌蓝渐变按钮 + 鲸鱼徽标 SVG，另有独立登录页 `/auth/page`
 - 🛠 **用户管理命令** — `/useradd` `/passwd` `/userlist` `/userdel`（密码不写入会话日志），另有 `webgate_user_*` 模型工具可让 Agent 代管
 - 💾 **持久化** — 用户库存放在 `$DSH_HOME/.credentials.yaml` 的 grant record 中，随 Harness 自身凭据文件一起管理，插件重启自动恢复
+- 🌐 **中英双语，默认中文** — 登录卡片右下角可一键切换「EN / 中文」（偏好记忆在本地）；英文浏览器自动切换；API 错误消息跟随请求的 `Accept-Language`
 - 🧩 **零依赖** — 纯 JavaScript 单文件实现；动态沙箱里没有 node:crypto，密码哈希使用内置 PBKDF2-HMAC-SHA256（20000 次迭代，已通过标准测试向量验证）
 
 ## 安装
@@ -54,6 +55,8 @@ dsh plugin --profile web add dsh-webgate
 ```
 /passwd admin 你的新密码
 ```
+
+界面语言：登录卡片右下角点击「EN / 中文」即可切换并记住偏好；默认中文，英文浏览器自动切换为英文。`/auth/page` 独立页与全部 API 提示同样双语（接口按 `Accept-Language` 协商）。
 
 添加更多用户 / 管理：
 
