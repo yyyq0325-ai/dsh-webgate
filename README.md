@@ -105,7 +105,8 @@ dsh plugin --profile web remove @yyyq0325/dsh-webgate
 
 1. 打开 `$DSH_HOME/.credentials.yaml`（默认 `~/.dsh/.credentials.yaml`）；
 2. 删除 `records:` 段下 `webgate/users:` 的整段记录（**其他内容一律不动**）；
-3. 重启 dsh —— 插件启动时发现没有用户，会重新引导初始账号 `admin / admin1234`。
+3. ⚠️ 如果删除后 `records:` 下面已经没有任何条目，必须把 `records:` 这一行也一并删除（或改写成 `records: {}`）。留一个空值的 `records:` 键会让 YAML 把它解析成 null，插件写入用户记录时会报 `Expected YAML collection at records`；
+4. 重启 dsh —— 插件启动时发现没有用户，会重新引导初始账号 `admin / admin1234`。
 
 > 该文件里同时保存着 API Key 等其他凭据，只删 `webgate/users` 那一段即可，其余行请保持原样。
 

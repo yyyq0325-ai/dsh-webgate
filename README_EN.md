@@ -92,7 +92,8 @@ In `~/.dsh/profiles/web/cordis.patch.yml`, add `disabled: true` to the row (keep
 
 1. Open `$DSH_HOME/.credentials.yaml` (default `~/.dsh/.credentials.yaml`);
 2. Delete the whole `webgate/users:` entry under `records:` (touch nothing else);
-3. Restart dsh — the plugin finds no users and bootstraps `admin / admin1234` again.
+3. ⚠️ If no entries remain under `records:`, delete the `records:` line too (or rewrite it as `records: {}`). Leaving a valueless `records:` key makes YAML parse it as null, and the plugin will fail to write user records with `Expected YAML collection at records`;
+4. Restart dsh — the plugin finds no users and bootstraps `admin / admin1234` again.
 
 > The same file also holds your API keys; only remove the `webgate/users` block.
 
