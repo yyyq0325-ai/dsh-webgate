@@ -35,7 +35,7 @@ dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 ```yaml
 - insert:
     - id: webgate
-      name: '@yyyq0325-ai/dsh-webgate'
+      name: '@yyyq0325/dsh-webgate'
 ```
 
 并确保本包已安装到 profile 可解析的位置（如 profile 目录下 `npm i github:yyyq0325-ai/dsh-webgate`）。
@@ -87,7 +87,7 @@ dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 ### npm 安装版的停用与卸载
 
 ```bash
-dsh plugin --profile web remove @yyyq0325-ai/dsh-webgate
+dsh plugin --profile web remove @yyyq0325/dsh-webgate
 ```
 
 ### 手动 patch 行的停用与卸载
@@ -97,7 +97,7 @@ dsh plugin --profile web remove @yyyq0325-ai/dsh-webgate
 ```yaml
 - insert:
     - id: webgate
-      name: '@yyyq0325-ai/dsh-webgate'
+      name: '@yyyq0325/dsh-webgate'
       disabled: true   # 停用；或删除整个条目卸载
 ```
 

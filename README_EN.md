@@ -33,7 +33,7 @@ Copy the insert row from [`cordis.patch.yml`](cordis.patch.yml) into your profil
 ```yaml
 - insert:
     - id: webgate
-      name: '@yyyq0325-ai/dsh-webgate'
+      name: '@yyyq0325/dsh-webgate'
 ```
 
 ### Option C — dynamic plugin (no install)
@@ -81,7 +81,7 @@ Paste the contents of [`dynamic/webgate.host.js`](dynamic/webgate.host.js) as `c
 ### Disable/uninstall the installed package
 
 ```bash
-dsh plugin --profile web remove @yyyq0325-ai/dsh-webgate
+dsh plugin --profile web remove @yyyq0325/dsh-webgate
 ```
 
 ### Disable/uninstall a manual patch row
