@@ -17,10 +17,13 @@
 
 ## 安装
 
+> ⚠️ npm 注册表上的 `dsh-webgate` 是另一个无关包（远程访问工具，作者 pppolf）。请始终使用下面的 **GitHub 来源或带 scope 的完整包名** 安装本插件。
+
 ### 方式 A：官方 CLI（推荐）
 
 ```bash
-dsh plugin --profile web add dsh-webgate
+# 从 GitHub 直接安装（无需发布到 npm）
+dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 ```
 
 安装命令会依据 `package.json` 的 `dsh.bundle.patch` 声明自动挂载本插件，重启 dsh 后生效。
@@ -32,10 +35,10 @@ dsh plugin --profile web add dsh-webgate
 ```yaml
 - insert:
     - id: webgate
-      name: dsh-webgate
+      name: '@yyyq0325-ai/dsh-webgate'
 ```
 
-并确保本包已安装到 profile 可解析的位置（如 profile 目录下 `npm i <本包路径>`）。
+并确保本包已安装到 profile 可解析的位置（如 profile 目录下 `npm i github:yyyq0325-ai/dsh-webgate`）。
 
 ### 方式 C：临时动态插件（免安装）
 
@@ -94,7 +97,7 @@ dsh plugin --profile web remove dsh-webgate
 ```yaml
 - insert:
     - id: webgate
-      name: dsh-webgate
+      name: '@yyyq0325-ai/dsh-webgate'
       disabled: true   # 停用；或删除整个条目卸载
 ```
 

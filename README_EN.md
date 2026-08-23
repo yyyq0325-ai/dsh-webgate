@@ -17,10 +17,13 @@ Add a username/password gate to the [DeepSeek Harness](https://github.com/deepse
 
 ## Install
 
+> ⚠️ `dsh-webgate` on the npm registry is an unrelated package (a remote-access tool by pppolf). Always install from the **GitHub source** or with the **full scoped name**.
+
 ### Option A — official CLI (recommended)
 
 ```bash
-dsh plugin --profile web add dsh-webgate
+# Install straight from GitHub (no npm publish needed)
+dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 ```
 
 ### Option B — manual mount
@@ -30,7 +33,7 @@ Copy the insert row from [`cordis.patch.yml`](cordis.patch.yml) into your profil
 ```yaml
 - insert:
     - id: webgate
-      name: dsh-webgate
+      name: '@yyyq0325-ai/dsh-webgate'
 ```
 
 ### Option C — dynamic plugin (no install)
