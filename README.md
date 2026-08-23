@@ -113,6 +113,26 @@ dsh plugin --profile web remove dsh-webgate
 
 本插件只注册自己的路由/监听/命令，除上述一条凭据记录外不修改任何 Harness 数据。无论出现何种异常，按上面任一方式停用插件并重启 dsh，即可完全恢复到安装前状态。
 
+### 排查：装卸插件后全站 400/404
+
+**症状**：安装或卸载任意插件后 Web 全挂——`/` 与 `/index.html` 返回空 body 的 400，其余路径 404；卸载插件、重启 dsh 均无效。
+
+**原因**：部分第三方插件把 peerDependencies 钉在旧版 `@deepseek-ai/*` 上。在 profile 目录里执行安装时，这些旧版包会被物化到 `~/.dsh/profiles/web/node_modules/@deepseek-ai/`，而 cordis Loader 以 profile 目录为锚解析路由插件，旧版 `@deepseek-ai/dsh-host-webserver` 就会遮蔽 Harness 自带的新版；两个版本的 API 不匹配（新版 frontend-static 每次渲染 index 都要调用旧版上不存在的 `renderIndex`），于是所有页面都抛异常。
+
+**修复**：
+
+1. 完全退出 dsh；
+2. 把旧版影子目录改名移走（确认恢复后可删除备份）：
+
+   ```powershell
+   Rename-Item ~/.dsh/profiles/web/node_modules/@deepseek-ai _stale-deepseekai-backup
+   ```
+
+3. 重启 dsh。这些包会经由 `$DSH_HOME/profiles/node_modules` 的软链接回退解析到 Harness 自带版本；
+4. 页面恢复正常后删除 `_stale-deepseekai-backup`。
+
+**预防**：往 profile 安装插件一律走 `dsh plugin --profile web add <pkg>`（底层 pnpm，遵守 `autoInstallPeers: false`）；不要在 profile 目录手动跑 npm 安装——npm 会自动安装 peer 依赖，容易再次引入版本漂移。
+
 ## 工作原理
 
 ```

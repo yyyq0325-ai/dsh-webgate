@@ -96,6 +96,26 @@ In `~/.dsh/profiles/web/cordis.patch.yml`, add `disabled: true` to the row (keep
 
 > The same file also holds your API keys; only remove the `webgate/users` block.
 
+### Troubleshooting: every page returns 400/404 after installing or removing a plugin
+
+**Symptom**: after adding or removing any plugin, the whole web UI breaks — `/` and `/index.html` answer with an empty-body 400 while every other path 404s; uninstalling the plugin and restarting dsh changes nothing.
+
+**Cause**: some third-party plugins pin their peerDependencies to older `@deepseek-ai/*` versions. Installing inside the profile directory materializes those stale copies into `~/.dsh/profiles/web/node_modules/@deepseek-ai/`, and the cordis Loader resolves route plugins anchored at that directory — so a stale `@deepseek-ai/dsh-host-webserver` shadows the harness's own newer copy. The two versions disagree on API (the current frontend-static calls `renderIndex` on every index render, which does not exist on the old class), so every page throws.
+
+**Fix**:
+
+1. Exit dsh completely;
+2. Move the stale shadow directory aside (delete it once things work again):
+
+   ```powershell
+   Rename-Item ~/.dsh/profiles/web/node_modules/@deepseek-ai _stale-deepseekai-backup
+   ```
+
+3. Start dsh again. Those packages now fall through the `$DSH_HOME/profiles/node_modules` symlinks back to the versions bundled with your dsh installation;
+4. Once the pages recover, delete `_stale-deepseekai-backup`.
+
+**Prevention**: install profile plugins only through `dsh plugin --profile web add <pkg>` (pnpm underneath, honoring `autoInstallPeers: false`); never run npm installs manually in the profile directory — npm auto-installs peer dependencies and reintroduces version drift.
+
 ## How it works
 
 The plugin registers `/auth/api/*` routes (login / session / logout / health) on the harness web server and pushes a self-contained guard script into every served `index.html`. Passwords are stored as `PBKDF2-HMAC-SHA256` hashes with per-user random salts and compared in constant time. The user database is one credentials grant record (`webgate/users`) whose payload is a JSON *string* — primitives cross the dynamic-plugin sandbox boundary safely, unlike realm-specific plain objects.
