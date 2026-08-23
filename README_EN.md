@@ -81,7 +81,7 @@ Paste the contents of [`dynamic/webgate.host.js`](dynamic/webgate.host.js) as `c
 ### Disable/uninstall the installed package
 
 ```bash
-dsh plugin --profile web remove dsh-webgate
+dsh plugin --profile web remove @yyyq0325-ai/dsh-webgate
 ```
 
 ### Disable/uninstall a manual patch row

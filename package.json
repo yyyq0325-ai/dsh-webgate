@@ -32,7 +32,11 @@
   "scripts": {
     "build:dynamic": "node scripts/build-dynamic.mjs",
     "test": "node scripts/crypto-selftest.mjs && node scripts/check.mjs && node scripts/browsersim.test.mjs",
-    "verify:live": "pwsh -File scripts/verify-webgate.ps1"
+    "verify:live": "pwsh -File scripts/verify-webgate.ps1",
+    "prepublishOnly": "npm test"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "deepseek-harness",

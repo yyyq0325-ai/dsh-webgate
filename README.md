@@ -87,7 +87,7 @@ dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 ### npm 安装版的停用与卸载
 
 ```bash
-dsh plugin --profile web remove dsh-webgate
+dsh plugin --profile web remove @yyyq0325-ai/dsh-webgate
 ```
 
 ### 手动 patch 行的停用与卸载
