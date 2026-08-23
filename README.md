@@ -6,7 +6,7 @@
 
 ## 特性
 
-- 🔐 **全页登录门禁** — 通过 `webserver/index-inject` 向每个 `index.html` 注入同步门禁脚本，未认证时全屏遮罩，应用内容零闪现
+- 🔐 **路由级登录门禁** — 通过 `webserver/index-inject` 向每个 `index.html` 注入守卫脚本：无令牌或过期立即 `location.replace('/login')` 跳转到独立登录页，登录后跳回原地址；守卫同步执行并临时隐藏文档，应用内容零闪现
 - ⏱ **12 小时会话令牌** — 绝对有效期；前端 30 秒巡检 + 页面重新可见时向服务端复核；过期自动回到登录页
 - 🚀 **后台任务零打扰** — 门禁只作用于浏览器视图层，Host 端的会话、后台任务、子代理照常运行
 - 🎨 **DeepSeek 官网风格登录页** — 深蓝紫渐变 + 毛玻璃卡片 + 品牌蓝渐变按钮 + 鲸鱼徽标 SVG，另有独立登录页 `/auth/page`
@@ -116,12 +116,13 @@ dsh plugin --profile web remove dsh-webgate
 浏览器 ── GET / ──▶ webServer(fallback=静态 dist)
                      │ renderIndex()
                      │ ├─ 结构化注入表（webserver/index-inject 事件）
-                     │ │   └─ WebGate：<script>门禁脚本</script>
+                     │ │   └─ WebGate：<script>守卫脚本</script>
                      ▼
-        未认证 → 全屏登录遮罩 ── POST /auth/api/login ──▶ 校验 PBKDF2 哈希
-                     │                                      │ 签发 12h 令牌
-                     ◀── localStorage 保存 token/exp ───────┘
-        已认证 → 放行应用（30s 巡检 + visibilitychange 服务端复核）
+   无令牌/过期 → location.replace('/login') ──▶ 独立登录页（双语）
+                                                  │ POST /auth/api/login
+                                                  ▼ 校验 PBKDF2 哈希，签发 12h 令牌
+   登录成功 ◀── Cookie + localStorage 写入 token/exp ─┘ → 跳回 next（默认 /）
+   已认证 → 正常使用（30s 巡检 + visibilitychange 服务端复核 + 会话角标）
 ```
 
 - **密码存储**：`PBKDF2-HMAC-SHA256(20000 iter, 16B random salt)`，常数时间比较；命令参数带密码时不写入会话日志（`recordInput: false`）
@@ -130,12 +131,12 @@ dsh plugin --profile web remove dsh-webgate
 
 ## 安全边界（请务必阅读）
 
-这是一个面向**本地个人工具**的入口门禁，不是企业级安全方案：
+这是一个面向**本地个人工具**的入口门禁，不是企业级安全方案。当前为「守卫跳转」模式：守卫脚本运行在浏览器里，**理论上可以被 DevTools 禁用或删除**——绕过后页面外壳与 `/api` 数据通道仍然可达。原因与边界：
 
-1. 门禁覆盖 **Web 页面入口**（index.html 注入）。DSH 的 webServer 没有通用 HTTP 中间件层，因此本机进程绕过页面直接调用 API 不经过此认证。
-2. 默认只监听 `127.0.0.1`；若改为 `0.0.0.0` 暴露到局域网，请自行评估风险并配合反代加认证。
+1. DSH 的 `/api` 数据通道由 `@deepseek-ai/dsh-client-connection` 以命名前缀路由注册在 webServer 上：路由一经注册不可覆盖、最长前缀优先使其他路由无法遮蔽它，而 webServer 本身没有请求中间件缝隙。因此动态插件**无法在服务端对 `/api` 强制鉴权**，这是当前 Harness 扩展点的硬限制，不是本插件的选择。
+2. 默认只监听 `127.0.0.1`；若改为 `0.0.0.0` 暴露到局域网，**务必**在前面加反向代理（Caddy/nginx Basic Auth 等）做真正的服务端鉴权。
 3. 初始管理员密码是公开的默认值，部署后第一件事就是改密码。
-4. 登录令牌保存在浏览器 localStorage，且为内存态（Host 重启后需重新登录）。
+4. 登录令牌保存在浏览器 localStorage 与内存中；同时下发 `webgate_token` Cookie（SameSite=Lax），一旦上游提供网关级校验点即可无缝切换为强制模式。
 
 ## 开发与测试
 

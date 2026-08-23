@@ -6,7 +6,7 @@ Add a username/password gate to the [DeepSeek Harness](https://github.com/deepse
 
 ## Features
 
-- 🔐 **Full-page login gate** — a synchronous guard script injected into every `index.html` via the `webserver/index-inject` event; an opaque overlay covers the app until you are authenticated (zero content flash)
+- 🔐 **Route-level login gate** — a synchronous guard script injected into every `index.html` via the `webserver/index-inject` event: missing or expired tokens trigger `location.replace('/login')` (a standalone bilingual login page); after sign-in you are redirected back. The guard hides the document synchronously, so app content never flashes
 - ⏱ **12-hour session tokens** — absolute expiry; 30-second client watchdog plus server-side re-check when the page becomes visible again
 - 🚀 **Zero impact on running tasks** — the gate only guards the browser view; host-side sessions, background jobs, and subagents run unaffected
 - 🎨 **DeepSeek-style login page** — deep blue/purple gradient, glassmorphism card, brand-blue gradient button, whale badge SVG; standalone page at `/auth/page`
@@ -101,12 +101,12 @@ All routes, listeners, commands, and tool registrations hang off the plugin fibe
 
 ## Security notes
 
-This is an entry gate for a **local personal tool**, not enterprise security:
+This is an entry gate for a **local personal tool**, not enterprise security. The current "guard redirect" mode runs in the browser and **can be defeated with DevTools** (disable/delete the guard script) — after bypassing, the shell and the `/api` data channel remain reachable. Why:
 
-1. The gate covers the **web page entry point**. DSH's webServer has no general HTTP middleware layer, so local processes calling APIs directly bypass this authentication.
-2. The server binds `127.0.0.1` by default. If you rebind to `0.0.0.0`, evaluate the risk and put an authenticating reverse proxy in front.
+1. DSH's `/api` data channel is registered on webServer as a named prefix route by `@deepseek-ai/dsh-client-connection`. Routes cannot be overridden once registered, longer-prefix routing prevents shadowing it, and webServer has no request-middleware seam — so a dynamic plugin **cannot enforce server-side auth on `/api`**. This is a hard limit of current Harness extension points, not a design choice here.
+2. The server binds `127.0.0.1` by default. If you rebind to `0.0.0.0`, put an authenticating reverse proxy (Caddy/nginx Basic Auth) in front — that is the real enforcement point.
 3. The initial admin password is public — change it first thing.
-4. Tokens live in browser localStorage and host memory only; a host restart requires re-login.
+4. Tokens live in browser localStorage and host memory only; a host restart requires re-login. A `webgate_token` Cookie (SameSite=Lax) is also issued, ready for gateway-level checks if upstream adds such a seam.
 
 ## Development
 

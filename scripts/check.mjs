@@ -63,8 +63,8 @@ async function runSuite(tag, plugin) {
   plugin.apply(m.ctx)
 
   const routes = m.registeredRoutes
-  expect(`[${tag}] 注册 5 条路由`,
-    ['exact /auth/page', 'exact /auth/api/health', 'exact /auth/api/login', 'exact /auth/api/session', 'exact /auth/api/logout']
+  expect(`[${tag}] 注册 6 条路由（含 /login）`,
+    ['exact /login', 'exact /auth/page', 'exact /auth/api/health', 'exact /auth/api/login', 'exact /auth/api/session', 'exact /auth/api/logout']
       .every(k => routes.has(k)))
   expect(`[${tag}] index-inject 监听就位`, (m.listeners['webserver/index-inject'] || []).length === 1)
 
@@ -122,12 +122,18 @@ async function runSuite(tag, plugin) {
   await routes.get('exact /auth/page')({ method: 'GET', headers: { accept: 'text/html', 'accept-language': 'en' }, on() { } }, res)
   expect(`[${tag}] /auth/page en 标题`, res.body.includes('Sign in</title>'))
 
-  // 正确密码 → 12h 令牌
+  // 正确密码 → 12h 令牌 + Cookie
   res = makeRes()
   await routes.get('exact /auth/api/login')(makeReq({ username: 'admin', password: 'admin1234' }), res)
   const good = JSON.parse(res.body)
   expect(`[${tag}] 正确登录签发令牌`, !!(good.ok && good.token && good.username === 'admin'))
   expect(`[${tag}] 有效期约 12 小时`, Math.abs(good.expiresAt - Date.now() - 12 * 3600 * 1000) < 60000)
+  expect(`[${tag}] 响应种下 webgate_token Cookie`, String((res.headers && res.headers['Set-Cookie']) || '').includes('webgate_token='))
+
+  // /login 路由返回登录页
+  res = makeRes()
+  await routes.get('exact /login')({ method: 'GET', headers: {}, on() { } }, res)
+  expect(`[${tag}] /login 返回登录页`, (res.body || '').includes('登录</title>'))
 
   // 会话校验
   res = makeRes()

@@ -228,9 +228,11 @@ return {
   }
 
   // ---------- HTTP 小工具 ----------
-  function sendJson(res, status, obj) {
+  function sendJson(res, status, obj, extraHeaders) {
     try {
-      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+      const h = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }
+      if (extraHeaders) Object.assign(h, extraHeaders)
+      res.writeHead(status, h)
       res.end(JSON.stringify(obj))
     } catch (e) { /* 连接可能已断开 */ }
   }
@@ -340,7 +342,8 @@ return {
   }
 
   // ---------- 门禁前端（自包含工厂函数，序列化后注入浏览器；不得引用外层闭包） ----------
-  // MODE = 'overlay'：注入每个 index.html，未认证时全屏遮罩；MODE = 'page'：独立登录页。
+  // MODE = 'guard'：注入每个 index.html，未认证 → location.replace('/login')；
+  // MODE = 'page'：/login 独立登录页，登录成功写令牌后跳回 next（默认 '/'）。
   const gateFactory = function (GATE_CSS, LOGO_SVG, MODE) {
     'use strict'
     const K = 'dshWebgate'
@@ -474,6 +477,11 @@ return {
 
     if (MODE === 'page') {
       document.body.setAttribute('style', 'margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#1f2126')
+      let next = '/'
+      try {
+        const q = new URLSearchParams(window.location.search).get('next')
+        if (q && /^\/[^/]/.test(q)) next = q // 只允许站内路径，防开放跳转
+      } catch (e) { }
       const pg = document.createElement('div')
       pg.id = 'wg-gate'
       document.body.appendChild(pg)
@@ -482,7 +490,7 @@ return {
         const saved = pg.__wgSaved || {}
         bindLoginForm(pg, function (d) {
           sv('token', d.token); sv('exp', d.expiresAt)
-          location.href = '/'
+          location.href = next
         })
         bindLangToggle(pg, initPage)
         const iu = pg.querySelector('#wg-user'), ip = pg.querySelector('#wg-pass')
@@ -493,12 +501,7 @@ return {
       return
     }
 
-    // ---- overlay 模式 ----
-    const root = document.createElement('div')
-    root.id = 'wg-gate'
-    document.documentElement.appendChild(root)
-    document.documentElement.style.overflow = 'hidden'
-
+    // ---- guard 模式：不渲染遮罩；未认证直接跳转 /login，登录页负责发令牌 ----
     let watchTimer = null
     function stopWatch() { if (watchTimer) { clearInterval(watchTimer); watchTimer = null } }
     function hideChip() { const old = document.querySelector('.wg-chip'); if (old) old.remove() }
@@ -516,12 +519,11 @@ return {
       stopWatch(); hideChip()
       const tok = lg('token')
       rmv('token'); rmv('exp')
+      try { document.cookie = 'webgate_token=; Path=/; Max-Age=0; SameSite=Lax' } catch (e) { }
       if (!local && tok) {
-        try {
-          fetch('/auth/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: tok }) })
-        } catch (e) { }
+        fetch('/auth/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: tok }) })
       }
-      location.reload()
+      location.replace('/login')
     }
     function startWatch(user, exp) {
       stopWatch()
@@ -531,44 +533,36 @@ return {
       }, 30000)
       showChip(user, exp)
     }
-    function onSuccessSave(d) { sv('token', d.token); sv('exp', d.expiresAt); location.reload() }
-    function renderLogin() {
-      root.innerHTML = cardHtml()
-      const setErr = bindLoginForm(root, onSuccessSave)
-      bindLangToggle(root, renderLogin)
-      const saved = root.__wgSaved || {}
-      const iu = root.querySelector('#wg-user'), ip = root.querySelector('#wg-pass')
-      if (iu && saved.u) iu.value = saved.u
-      if (ip && saved.p) ip.value = saved.p
-      return setErr
+    function verified(d) {
+      if (d && d.expiresAt) sv('exp', d.expiresAt)
+      document.documentElement.style.visibility = ''
+      startWatch(d.username, d.expiresAt || parseInt(lg('exp'), 10) || Date.now())
     }
-    function showLogin(msg) {
-      const setErr = renderLogin()
-      if (msg) setErr(msg)
+    function goLogin() {
+      rmv('token'); rmv('exp')
+      try { document.cookie = 'webgate_token=; Path=/; Max-Age=0; SameSite=Lax' } catch (e) { }
+      location.replace('/login')
     }
-    function start() {
-      const tok = lg('token')
-      if (!tok) { showLogin(); return }
-      root.innerHTML = cardHtml('verify')
-      api('session', { token: tok }).then(function (d) {
-        if (d && d.ok && d.valid && d.username) {
-          root.style.display = 'none'
-          document.documentElement.style.overflow = ''
-          startWatch(d.username, d.expiresAt)
-        } else {
-          rmv('token'); rmv('exp')
-          showLogin('')
-        }
+    function verifySession(tok) {
+      return api('session', { token: tok }).then(function (d) {
+        if (d && d.ok && d.valid && d.username) verified(d)
+        else goLogin()
       }).catch(function () {
-        root.innerHTML = cardHtml('offline')
-        const r = root.querySelector('.wg-retry')
-        if (r) r.addEventListener('click', start)
+        // 认证服务暂时不可达：恢复显示留在原地（避免跳转死循环），下次页面重新可见时重试
+        document.documentElement.style.visibility = ''
       })
     }
-    document.addEventListener('visibilitychange', function () {
-      if (!document.hidden && lg('token')) start()
-    })
-    start()
+    const tok0 = lg('token')
+    const exp0 = parseInt(lg('exp'), 10)
+    document.documentElement.style.visibility = 'hidden' // 同步隐藏，防止应用内容闪现
+    if (!tok0 || !exp0 || Date.now() > exp0 - 2000) {
+      goLogin()
+    } else {
+      verifySession(tok0)
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden && lg('token')) verifySession(lg('token'))
+      })
+    }
   }
 
   // ---------- 注册路由与页面注入 ----------
@@ -624,32 +618,33 @@ return {
 
     const LOGO_SVG = '<svg width="34" height="34" viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="wgg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4d6bfe"/><stop offset="1" stop-color="#679efe"/></linearGradient></defs><path fill="url(#wgg)" d="M5 27C5 17.6 12.8 11 23 11c7.6 0 13.9 4 16.4 10.2l4.1-1.9-1.8 9.3c.2 1 .3 2 .3 3.1h-6.6c-2.3 3.9-7 6.3-12.4 6.3C13.6 38 5 33.6 5 27z"/><circle cx="32.2" cy="22.5" r="1.9" fill="#0b1023"/></svg>'
 
-    // 结构化 index 注入：每次渲染 index.html 时都会触发本监听并读取当前行
+    // 结构化 index 注入：守卫脚本（未认证 → location.replace('/login')）
     ctx.on('webserver/index-inject', function (table) {
       table.push({
         kind: 'script',
         placement: 'head',
-        text: '(' + gateFactory.toString() + ')(' + JSON.stringify(GATE_CSS) + ',' + JSON.stringify(LOGO_SVG) + ',"overlay");'
+        text: '(' + gateFactory.toString() + ')(' + JSON.stringify(GATE_CSS) + ',' + JSON.stringify(LOGO_SVG) + ',"guard");'
       })
     })
 
-    // 独立登录页（直接访问 /auth/page 时使用）
+    // 登录页：/login 与 /auth/page 共用同一处理函数
+    const serveLoginPage = async function (req, res) {
+      try {
+        const pl = localeOf(req)
+        const html = '<!doctype html><html lang="' + (pl === 'en' ? 'en' : 'zh-CN') + '"><head><meta charset="utf-8"/>'
+          + '<meta name="viewport" content="width=device-width,initial-scale=1"/>'
+          + '<title>DeepSeek Harness · ' + (pl === 'en' ? 'Sign in' : '登录') + '</title></head><body>'
+          + '<scr' + 'ipt>(' + gateFactory.toString() + ')(' + JSON.stringify(GATE_CSS) + ',' + JSON.stringify(LOGO_SVG) + ',"page");</scr' + 'ipt>'
+          + '</body></html>'
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
+        res.end(html)
+      } catch (e) { sendJson(res, 500, { ok: false, message: 'render failed' }) }
+    }
     ctx.effect(function () {
-      return web.register({
-        kind: 'exact', path: '/auth/page',
-        handler: async function (req, res) {
-          try {
-            const pl = localeOf(req)
-            const html = '<!doctype html><html lang="' + (pl === 'en' ? 'en' : 'zh-CN') + '"><head><meta charset="utf-8"/>'
-              + '<meta name="viewport" content="width=device-width,initial-scale=1"/>'
-              + '<title>DeepSeek Harness · ' + (pl === 'en' ? 'Sign in' : '登录') + '</title></head><body>'
-              + '<scr' + 'ipt>(' + gateFactory.toString() + ')(' + JSON.stringify(GATE_CSS) + ',' + JSON.stringify(LOGO_SVG) + ',"page");</scr' + 'ipt>'
-              + '</body></html>'
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
-            res.end(html)
-          } catch (e) { sendJson(res, 500, { ok: false, message: 'render failed' }) }
-        }
-      })
+      return web.register({ kind: 'exact', path: '/login', handler: serveLoginPage })
+    })
+    ctx.effect(function () {
+      return web.register({ kind: 'exact', path: '/auth/page', handler: serveLoginPage })
     })
 
     // 运行诊断
@@ -687,7 +682,10 @@ return {
           if (!ok) { await delay(900); return sendJson(res, 200, { ok: false, message: MSG[L].badCreds }) }
           const tok = issueToken(u)
           console.log('[webgate] 用户登录成功: ' + u)
-          sendJson(res, 200, { ok: true, token: tok, expiresAt: tokens[tok].exp, username: u })
+          // 同时种下 Cookie：为未来服务端网关级校验留好通道
+          sendJson(res, 200, { ok: true, token: tok, expiresAt: tokens[tok].exp, username: u }, {
+            'Set-Cookie': 'webgate_token=' + tok + '; Path=/; Max-Age=' + Math.floor(TOKEN_TTL_MS / 1000) + '; SameSite=Lax'
+          })
         }
       })
     })
@@ -712,7 +710,9 @@ return {
           if (req.method !== 'POST') return sendJson(res, 405, { ok: false, message: 'method not allowed' })
           const b = await readJsonBody(req)
           delete tokens[String(b.token || '')]
-          sendJson(res, 200, { ok: true })
+          sendJson(res, 200, { ok: true }, {
+            'Set-Cookie': 'webgate_token=; Path=/; Max-Age=0; SameSite=Lax'
+          })
         }
       })
     })
