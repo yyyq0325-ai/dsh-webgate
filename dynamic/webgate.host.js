@@ -21,6 +21,11 @@
  * @module dsh-webgate
  */
 
+// inject 必须声明全部依赖：cordis 的 Fiber 在每个注入服务激活之前会把插件
+// 挂起（park），全部就绪才调用 apply。只声明 timer 会让本插件在其他服务
+// 尚未启动时提前执行，ctx.get() 全部返回 undefined（服务"不可用"假象）。
+// 注意：本版本 cordis 只支持扁平数组形式；数组内每一项都是硬依赖——
+// 不含 webServer 的 profile（headless/tui）里本插件会保持挂起，属预期行为。
 
 const STORE_KEY = 'webgate/users' // credentials grant record：<scope>/<id>
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000 // 12 小时绝对有效期
@@ -30,7 +35,7 @@ const INITIAL_PASS = 'admin1234'
 
 
 return {
-  inject: ['timer'],
+  inject: ['timer', 'webServer', 'credentials', 'commands', 'tools'],
   apply(ctx) {
   const creds = ctx.get('credentials')
   const web = ctx.get('webServer')

@@ -150,7 +150,7 @@ async function runSuite(tag, plugin) {
 }
 
 // ---------- 形态 A：ESM 模块（npm 包形态） ----------
-await runSuite('src', { inject: ['timer'], apply })
+await runSuite('src', { inject: ['timer', 'webServer', 'credentials', 'commands', 'tools'], apply })
 
 // ---------- 形态 B：动态插件函数体产物 ----------
 const dynPath = path.join(root, 'dynamic', 'webgate.host.js')
@@ -161,7 +161,8 @@ if (fs.existsSync(dynPath)) {
   const mod = require(wrappedFile)
   const plugin = mod({}, {})
   expect('dynamic 产物返回插件对象', !!plugin && typeof plugin.apply === 'function')
-  expect('dynamic 产物声明 inject timer', JSON.stringify(plugin.inject) === JSON.stringify(['timer']))
+  const expectedInject = ['timer', 'webServer', 'credentials', 'commands', 'tools']
+  expect('dynamic 产物声明完整 inject 依赖（与 src 一致）', JSON.stringify(plugin.inject) === JSON.stringify(expectedInject))
   await runSuite('dynamic', plugin)
   fs.rmSync(wrappedFile, { force: true })
 } else {

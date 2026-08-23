@@ -20,9 +20,13 @@ if (idx < 0) throw new Error('src/index.js 中未找到 "export function apply(c
 
 let header = src.slice(0, idx)
 header = header.replace(/^export const name = .*\n/mg, '')
+// 从源码提取 inject 声明（如 ["timer", "webServer", …]），保证动态形态与
+// ESM 形态的依赖声明一致——否则 cordis 会在服务就绪前提前调用 apply。
+const injectMatch = src.match(/^export const inject = (.+)$/m)
+if (!injectMatch) throw new Error('src/index.js 中未找到 "export const inject = ..."')
 header = header.replace(/^export const inject = .*\n/mg, '')
 
-let rest = src.slice(idx).replace(applyMarker, "return {\n  inject: ['timer'],\n  apply(ctx) {")
+let rest = src.slice(idx).replace(applyMarker, "return {\n  inject: " + injectMatch[1] + ",\n  apply(ctx) {")
 if (!/\}\s*$/.test(rest)) throw new Error('src/index.js 结尾不是 apply 的收尾大括号')
 rest = rest.replace(/\}\s*$/, '}\n}')
 
