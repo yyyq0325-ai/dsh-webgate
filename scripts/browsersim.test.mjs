@@ -153,31 +153,33 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
   expect('B5 页面可见性复核通过', env.replaces().length === 0)
   expect('B6 会话响应写入本地 perms', (env.storage['dshWebgate.perms'] || '').includes('"role":"admin"'))
 
-  // ---- J: 成员工作区过滤（fetch 包装）----
+  // ---- J: 成员工作区过滤（fetch 包装；模拟真实调用：URL 对象 + 按目录名授予）----
   const wsItems = [
-    { workspaceId: 'w1', path: 'D:\\proj-a', title: 'A', sessionIds: [], createdAt: '', updatedAt: '' },
-    { workspaceId: 'w2', path: 'D:\\proj-b', title: 'B', sessionIds: [], createdAt: '', updatedAt: '' },
+    { workspaceId: 'w1', path: 'D:\\code\\park', title: 'park', sessionIds: [], createdAt: '', updatedAt: '' },
+    { workspaceId: 'w2', path: 'D:\\code\\other', title: 'other', sessionIds: [], createdAt: '', updatedAt: '' },
   ]
   const listEnvelope = () => ({ type: 'server-response', rpcId: 'x', result: { ok: true, value: { items: JSON.parse(JSON.stringify(wsItems)), archivedSessionIds: [] } } })
-  const memberResponder = (url, opts) => {
+  const memberResponder = (u0, opts) => {
+    const url = String(u0)
     const b = JSON.parse(opts.body)
     if (url.endsWith('/api/workspace.list')) return listEnvelope()
-    if (url.endsWith('/session') && b.token === 'TK-m') return { ok: true, valid: true, username: 'alice', expiresAt: Date.now() + 3600000, perms: { role: 'member', workspaces: ['d:\\proj-a'] } }
+    if (url.endsWith('/session') && b.token === 'TK-m') return { ok: true, valid: true, username: 'alice', expiresAt: Date.now() + 3600000, perms: { role: 'member', workspaces: ['park'] } }
     return { ok: false }
   }
   env = buildEnv({
     storage: {
       'dshWebgate.token': 'TK-m', 'dshWebgate.exp': String(Date.now() + 3600000),
-      'dshWebgate.perms': JSON.stringify({ role: 'member', workspaces: ['d:\\proj-a'] }),
+      'dshWebgate.perms': JSON.stringify({ role: 'member', workspaces: ['park'] }),
     },
     responder: memberResponder,
   })
   await tick()
   expect('J1 成员会话不跳转', env.replaces().length === 0)
-  const listResp = await env.window.fetch('/api/workspace.list', { method: 'POST', body: '{}' })
+  // 真实传输形态：input 是 new URL(...) 对象
+  const listResp = await env.window.fetch(new URL('/api/workspace.list', 'http://127.0.0.1:3080'), { method: 'POST', body: '{}' })
   const lj = await listResp.json()
   const jItems = lj.result.value.items
-  expect('J2 workspace.list 过滤到授权项', Array.isArray(jItems) && jItems.length === 1 && jItems[0].path === 'D:\\proj-a')
+  expect('J2 URL对象入参也命中过滤（按目录名 park 匹配 D:\\code\\park）', Array.isArray(jItems) && jItems.length === 1 && jItems[0].path === 'D:\\code\\park')
   // 刷新 perms 后（会话复核返回同样权限）仍保持过滤
   ;(env.docListeners.visibilitychange || []).forEach(f => f())
   await tick()
@@ -206,7 +208,8 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
       'dshWebgate.token': 'TK-a2', 'dshWebgate.exp': String(Date.now() + 3600000),
       'dshWebgate.perms': JSON.stringify({ role: 'admin', workspaces: ['*'] }),
     },
-    responder: (url, opts) => {
+    responder: (u0, opts) => {
+      const url = String(u0)
       const b = JSON.parse(opts.body)
       if (url.endsWith('/api/workspace.list')) return listEnvelope()
       if (url.endsWith('/session') && b.token === 'TK-a2') return { ok: true, valid: true, username: 'admin', expiresAt: Date.now() + 3600000, perms: { role: 'admin', workspaces: ['*'] } }

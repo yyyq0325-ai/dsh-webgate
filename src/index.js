@@ -608,10 +608,30 @@ export function apply(ctx) {
       if (PERMS.workspaces.indexOf('*') >= 0) return true
       const p = String(w.path || '').toLowerCase()
       const ti = String(w.title || '').toLowerCase()
-      return PERMS.workspaces.some(function (m) {
-        const mm = String(m).toLowerCase()
-        return (p && p === mm) || (ti && ti === mm)
+      return PERMS.workspaces.some(function (m0) {
+        const mm = String(m0).toLowerCase()
+        // 匹配规则：完整路径相等 / 标题相等 / 路径以「分隔符+匹配器」结尾（按目录名授予）
+        return p === mm || ti === mm || p.endsWith('\\' + mm) || p.endsWith('/' + mm)
       })
+    }
+    function requestUrlOf(input) {
+      try {
+        if (typeof input === 'string') return input
+        if (input && typeof input.href === 'string') return input.href // URL 对象
+        if (input && typeof input.url === 'string') return input.url   // Request 对象
+      } catch (e) { }
+      return ''
+    }
+    function pathnameOf(raw) {
+      let s = String(raw || '')
+      const q = s.indexOf('?'); if (q >= 0) s = s.slice(0, q)
+      const hash = s.indexOf('#'); if (hash >= 0) s = s.slice(0, hash)
+      const scheme = s.indexOf('://')
+      if (scheme > 0) {
+        const slash = s.indexOf('/', scheme + 3)
+        s = slash >= 0 ? s.slice(slash) : '/'
+      }
+      return s
     }
     const __origFetch = window.fetch
     // 成员被拒绝的 RPC：设置域全部、创建工作区、跨工作区搜索、创建目录
@@ -642,9 +662,9 @@ export function apply(ctx) {
         if (methodName && DENY_METHODS.some(function (d) { return methodName === d || methodName.indexOf(d) === 0 })) {
           return Promise.resolve(deniedResponse(bodyText))
         }
-        const url = typeof input === 'string' ? input : (input && input.url) || ''
+        const rawUrl = requestUrlOf(input)
         const mth = String((init && init.method) || (input && input.method) || 'GET').toUpperCase()
-        if (mth === 'POST' && url.indexOf('/api/workspace.list') >= 0 && typeof Response !== 'undefined') {
+        if (mth === 'POST' && pathnameOf(rawUrl).indexOf('/api/workspace.list') === 0 && typeof Response !== 'undefined') {
           return p.then(function (resp) {
             let clone
             try { clone = resp.clone() } catch (e) { return resp }
