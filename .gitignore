@@ -6,3 +6,4 @@ Thumbs.db
 .check-dynamic.wrapped.cjs
 dist/
 lib/
+/.reasonix
