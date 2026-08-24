@@ -4,6 +4,8 @@
 
 Add a username/password gate to the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) web GUI: every visit to DSH Web requires a login first. Session tokens last **12 hours**, and when a token expires, **background tasks keep running** — log back in and everything is still there.
 
+📋 Changelog (new features and breaking changes are recorded here): **[CHANGELOG.en.md](CHANGELOG.en.md)**
+
 ## Features
 
 - 🔐 **Route-level login gate** — a synchronous guard script injected into every `index.html` via the `webserver/index-inject` event: missing or expired tokens trigger `location.replace('/login')` (a standalone bilingual login page); after sign-in you are redirected back. The guard hides the document synchronously, so app content never flashes

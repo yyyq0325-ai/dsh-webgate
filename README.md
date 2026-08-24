@@ -2,6 +2,8 @@
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 Web GUI 加一道账号密码门：每次打开 DSH Web 都必须先登录；登录令牌有效期 **12 小时**；令牌过期被登出时，**后台正在运行的任务完全不受影响**，重新登录后一切还在。
 
+📋 更新日志（新功能与破坏性变更都记录在这里）：**[CHANGELOG.zh.md](CHANGELOG.zh.md)**
+
 ![login](docs/login-preview.png)
 
 ## 特性
