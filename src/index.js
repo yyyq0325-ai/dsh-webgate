@@ -912,6 +912,35 @@ export function apply(ctx) {
         }
       })
     })
+
+    // ---------- 服务端会话校验端点（供反向代理 auth_request 使用） ----------
+    // 登录成功时已种下 webgate_token Cookie；本端点读取该 Cookie 并校验会话：
+    // 有效 → 204，缺失/无效/过期 → 401。恰好匹配 nginx auth_request 的判定
+    // 语义，让「服务端强制鉴权」无需 Basic Auth 弹窗也能落地。
+    // 现成配置见仓库 deploy/nginx/auth-request.conf。
+    function readCookie(req, name) {
+      const raw = String((req && req.headers && req.headers.cookie) || '')
+      for (const part of raw.split(';')) {
+        const eq = part.indexOf('=')
+        if (eq === -1) continue
+        if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim()
+      }
+      return ''
+    }
+    ctx.effect(function () {
+      return web.register({
+        kind: 'exact', path: '/auth/api/verify',
+        handler: function (req, res) {
+          const t = readCookie(req, 'webgate_token')
+          const rec = t ? tokens[t] : null
+          const ok = !!(rec && rec.exp > Date.now())
+          try {
+            res.writeHead(ok ? 204 : 401, { 'Cache-Control': 'no-store' })
+            res.end()
+          } catch (e2) { /* 连接可能已断开 */ }
+        }
+      })
+    })
   }
 
   // ---------- 斜杠命令（输入框里的“终端命令”） ----------

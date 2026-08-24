@@ -65,8 +65,8 @@ async function runSuite(tag, plugin) {
   plugin.apply(m.ctx)
 
   const routes = m.registeredRoutes
-  expect(`[${tag}] 注册 6 条路由（含 /login）`,
-    ['exact /login', 'exact /auth/page', 'exact /auth/api/health', 'exact /auth/api/login', 'exact /auth/api/session', 'exact /auth/api/logout']
+  expect(`[${tag}] 注册 7 条路由（含 /login）`,
+    ['exact /login', 'exact /auth/page', 'exact /auth/api/health', 'exact /auth/api/login', 'exact /auth/api/session', 'exact /auth/api/logout', 'exact /auth/api/verify']
       .every(k => routes.has(k)))
   expect(`[${tag}] index-inject 监听就位`, (m.listeners['webserver/index-inject'] || []).length === 1)
 
@@ -144,6 +144,17 @@ async function runSuite(tag, plugin) {
   const sess = JSON.parse(res.body)
   expect(`[${tag}] 会话有效`, sess.ok && sess.valid && sess.username === 'admin')
   expect(`[${tag}] 会话响应携带 perms(admin)`, !!sess.perms && sess.perms.role === 'admin')
+
+  // 服务端校验端点（nginx auth_request 对接面）
+  res = makeRes()
+  await routes.get('exact /auth/api/verify')(makeReq({}, { cookie: 'other=x; webgate_token=' + good.token }), res)
+  expect(`[${tag}] verify 有效令牌 Cookie 返回 204`, res.statusCode === 204)
+  res = makeRes()
+  await routes.get('exact /auth/api/verify')(makeReq({}, { cookie: 'webgate_token=not-a-real-token' }), res)
+  expect(`[${tag}] verify 无效令牌返回 401`, res.statusCode === 401)
+  res = makeRes()
+  await routes.get('exact /auth/api/verify')(makeReq({}), res)
+  expect(`[${tag}] verify 缺失 Cookie 返回 401`, res.statusCode === 401)
 
   // ---------- 角色与工作区授权（经命令处理器驱动 cores） ----------
   const inv = (rawInput) => ({ rawInput, agent: {}, attachments: [], signal: undefined })

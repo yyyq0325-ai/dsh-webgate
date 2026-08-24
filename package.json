@@ -1,7 +1,7 @@
 {
   "name": "@yyyq0325/dsh-webgate",
   "description": "Login gate for the DeepSeek Harness web GUI: username/password entry page (DeepSeek style), 12-hour session tokens, slash commands for user management. Background tasks keep running while logged out.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

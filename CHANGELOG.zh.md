@@ -4,6 +4,23 @@
 
 所有值得关注的新功能与修复都记录在本文件里，**新版本在最上面**。安装与使用说明见 [README](README.md)。
 
+## 0.2.2 · 2026-08-24
+
+服务端强制鉴权落地：反向代理配置模板 + 会话校验端点。
+
+### 新增
+
+- **`GET /auth/api/verify`**：读取登录时种下的 `webgate_token` Cookie 并校验会话——有效返回 `204`，缺失/无效/过期返回 `401`。恰好匹配 nginx `auth_request` 的判定语义，使「服务端强制鉴权」无需 Basic Auth 弹窗也能落地
+- **`deploy/nginx/` 反代配置模板**：
+  - 方案 A `basic-auth.conf` —— nginx Basic Auth 总闸 + 全站反代（WebSocket / SSE 参数已调好）
+  - 方案 B `auth-request.conf` —— `auth_request` 对接 WebGate 会话，未登录访问直接 302 到 `/login?next=…`
+- README「安全边界」补充两份模板的指引
+
+### 说明
+
+- WebGate 会话保存在 dsh 进程内存中，dsh 重启后所有会话失效，重新走一遍 `/login` 即可
+- 配置模板不随 npm 包分发，请从 GitHub 仓库获取
+
 ## 0.2.1 · 2026-08-24
 
 修复真实安装中「member 仍能看到全部工作区」的两个根因。

@@ -4,6 +4,23 @@ English | [中文](CHANGELOG.zh.md)
 
 Every notable feature and fix lands here, **newest first**. See the [README](README_EN.md) for install and usage.
 
+## 0.2.2 · 2026-08-24
+
+Server-side enforcement: reverse-proxy config templates + a session verify endpoint.
+
+### Added
+
+- **`GET /auth/api/verify`**: reads the `webgate_token` Cookie planted at login and validates the session — `204` when valid, `401` when missing/invalid/expired. This matches nginx `auth_request` semantics exactly, so server-side enforcement works without a Basic Auth prompt
+- **`deploy/nginx/` reverse-proxy templates**:
+  - Option A `basic-auth.conf` — site-wide nginx Basic Auth gate + full reverse proxy (WebSocket / SSE tuned)
+  - Option B `auth-request.conf` — `auth_request` wired to WebGate sessions; unauthenticated visitors are 302'd to `/login?next=…`
+- README "Security notes" now points to both templates
+
+### Notes
+
+- WebGate sessions live in dsh process memory — restarting dsh invalidates every session; just sign in again via `/login`
+- Config templates are not shipped in the npm package; grab them from this repository
+
 ## 0.2.1 · 2026-08-24
 
 Fixes for "member still sees every workspace" on real installs.
