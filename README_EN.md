@@ -13,6 +13,7 @@ Add a username/password gate to the [DeepSeek Harness](https://github.com/deepse
 - 🛠 **User management commands** — `/useradd`, `/passwd`, `/userlist`, `/userdel` (passwords never hit the session log), plus `webgate_user_*` model tools so your agent can manage accounts
 - 💾 **Persistent user store** — kept as a grant record inside `$DSH_HOME/.credentials.yaml`, restored automatically on plugin restart
 - 🌐 **Bilingual (Chinese default)** — one-click 中文/EN toggle on the login card (remembered locally); English browsers switch automatically; API messages follow the request's `Accept-Language`
+- 👥 **Roles & workspace grants (experimental)** — admin/member roles; members only see workspaces granted via `/grant`; mutating commands use an admin-password sudo model
 - 🧩 **Zero dependencies** — single-file pure JavaScript; PBKDF2-HMAC-SHA256 (20k iterations) implemented in-repo for sandboxes without `node:crypto`, validated against standard test vectors
 
 ## Install
@@ -57,12 +58,23 @@ Change it immediately after logging in:
 
 UI language: use the 中文/EN link at the bottom of the login card; defaults to Chinese, English browsers switch automatically. The standalone `/auth/page` and all API messages are localized too (`Accept-Language`).
 
+User management (**every mutating command requires an admin account's password at the end** — a sudo-passphrase model, so only someone who knows the admin password can change the account system):
+
 | Command | Description |
 |---|---|
-| `/useradd <name> <pass>` | Add a user (name: 2–32 chars `[A-Za-z0-9_.-]`; pass: 6–128 chars) |
-| `/passwd <name> <new-pass>` | Change password; revokes that user's active sessions |
-| `/userlist` | List users with creation time and active sessions |
-| `/userdel <name>` | Delete a user (at least one must remain) |
+| `/useradd <name> <pass> <admin-password>` | Add a member user (name: 2–32 chars `[A-Za-z0-9_.-]`; pass: 6–128 chars) |
+| `/passwd <name> <new-pass> <admin-password>` | Change password; revokes that user's active sessions |
+| `/userlist` | List users with role, workspace grants and active sessions |
+| `/userdel <name> <admin-password>` | Delete a user (at least one admin must remain) |
+| `/grant <name> <workspace-path\|title\|*> <admin-password>` | Grant a member visibility of one workspace; `*` = all |
+| `/revoke <name> <workspace-path\|title\|*\|all> <admin-password>` | Revoke; `*`/`all` clears every grant |
+
+## Roles & workspace permissions (v0.2.0 · experimental)
+
+- **admin**: full access to all workspaces and management (the initial `admin` account).
+- **member**: after sign-in only workspaces granted via `/grant` are visible (matched by full path or title, case-insensitive); other entries are filtered out client-side and their actions cannot be initiated from the UI.
+- Permission changes immediately revoke that member's active sessions; new permissions apply on next sign-in.
+- ⚠️ Strength: workspace filtering runs in the browser (the guard script wraps fetch) — it is **mistake-proofing**, not adversarial protection. See [Security notes](#security-notes). Server-side enforcement requires upstream middleware/gateway hooks.
 
 Health probe: `GET /auth/api/health`.
 

@@ -38,9 +38,11 @@ function makeMocks() {
     },
     tapIndex() { return () => { } },
   }
-  const fakeCommands = { register() { return () => { } } }
-  const fakeTools = { register(def) { registeredTools.push(def.name); return () => { } } }
   const registeredTools = []
+  const registeredCommands = []
+  const commandDefs = {}
+  const fakeCommands = { register(def) { registeredCommands.push(def.name); commandDefs[def.name] = def; return () => { } } }
+  const fakeTools = { register(def) { registeredTools.push(def.name); return () => { } } }
   const ctx = {
     get(name) {
       if (name === 'credentials') return fakeCredentials
@@ -53,7 +55,7 @@ function makeMocks() {
     effect(fn) { effectsRan.push(fn); const d = fn && fn(); return typeof d === 'function' ? d : () => { } },
     timeout(ms) { return new Promise(r => setTimeout(r, ms)) },
   }
-  return { ctx, registeredRoutes, listeners, fakeCredentials, registeredTools }
+  return { ctx, registeredRoutes, listeners, fakeCredentials, registeredTools, commandDefs }
 }
 
 // ---------- 对一个插件对象执行完整断言 ----------
@@ -83,6 +85,7 @@ async function runSuite(tag, plugin) {
   let payload = stored && stored.payload
   if (typeof payload === 'string') { try { payload = JSON.parse(payload) } catch { payload = null } }
   expect(`[${tag}] 初始管理员已持久化（字符串 payload）`, !!payload && !!payload.users && !!payload.users.admin)
+  expect(`[${tag}] 初始管理员角色为 admin`, !!payload && !!payload.users.admin && payload.users.admin.role === 'admin')
 
   function makeRes() {
     return {
@@ -140,6 +143,46 @@ async function runSuite(tag, plugin) {
   await routes.get('exact /auth/api/session')(makeReq({ token: good.token }), res)
   const sess = JSON.parse(res.body)
   expect(`[${tag}] 会话有效`, sess.ok && sess.valid && sess.username === 'admin')
+  expect(`[${tag}] 会话响应携带 perms(admin)`, !!sess.perms && sess.perms.role === 'admin')
+
+  // ---------- 角色与工作区授权（经命令处理器驱动 cores） ----------
+  const inv = (rawInput) => ({ rawInput, agent: {}, attachments: [], signal: undefined })
+  const run = async (name, line) => {
+    const def = m.commandDefs[name]
+    if (!def) return { kind: 'error', text: 'no command ' + name }
+    return await def.handler(inv(line))
+  }
+
+  let r = await run('useradd', 'alice secret1 wrong-admin-pwd')
+  expect(`[${tag}] 错误管理员密码拒绝添加`, r.kind === 'error' && r.text.includes('管理员密码错误'))
+  r = await run('useradd', 'alice secret1')
+  expect(`[${tag}] 缺少管理员密码拒绝添加`, r.kind === 'error' && r.text.includes('Usage'))
+  r = await run('useradd', 'alice secret1 admin1234')
+  expect(`[${tag}] 正确管理员密码添加成功`, r.kind === 'success')
+  stored = m.fakeCredentials.store.get('webgate/users')
+  payload = typeof stored.payload === 'string' ? JSON.parse(stored.payload) : stored.payload
+  expect(`[${tag}] alice 为 member 且无工作区`,
+    payload.users.alice.role === 'member' && Array.isArray(payload.users.alice.workspaces) && payload.users.alice.workspaces.length === 0)
+
+  r = await run('grant', 'alice D:\\proj-a admin1234')
+  expect(`[${tag}] grant 授权成功`, r.kind === 'success')
+  r = await run('grant', 'alice * admin1234'.replace('* ', '') + 'x') // 非法占位，不应破坏状态
+  expect(`[${tag}] grant 参数不足报错`, r.kind === 'error')
+  r = await run('revoke', 'alice D:\\proj-a admin1234')
+  expect(`[${tag}] revoke 撤销成功`, r.kind === 'success')
+
+  // member 登录后 perms 只含被授予的工作区
+  r = await run('grant', 'alice D:\\proj-a admin1234')
+  expect(`[${tag}] 再次授权成功`, r.kind === 'success')
+  res = makeRes()
+  await routes.get('exact /auth/api/login')(makeReq({ username: 'alice', password: 'secret1' }), res)
+  const aliceLogin = JSON.parse(res.body)
+  if (aliceLogin.ok) {
+    expect(`[${tag}] alice 登录携带 member perms`, aliceLogin.perms.role === 'member'
+      && aliceLogin.perms.workspaces.includes('d:\\proj-a'))
+  } else {
+    expect(`[${tag}] alice 登录（校验点）`, false)
+  }
 
   // 注销后失效
   res = makeRes()
