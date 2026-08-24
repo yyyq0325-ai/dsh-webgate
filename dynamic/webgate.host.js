@@ -461,7 +461,8 @@ return {
         offline: '无法连接认证服务', retry: '重试',
         foot1: '登录会话有效期 12 小时', foot2: '后台任务持续运行，不受登出影响',
         hoursLeft: '剩余约 {n} 小时', signout: '退出',
-        toggle: 'EN'
+        toggle: 'EN',
+        denied: 'WebGate：当前账号无权执行该操作'
       },
       en: {
         sub: 'Harness Console · Sign in',
@@ -473,7 +474,8 @@ return {
         offline: 'Cannot reach the auth service', retry: 'Retry',
         foot1: 'Sessions last 12 hours', foot2: 'Background tasks keep running while signed out',
         hoursLeft: '~{n} h left', signout: 'Sign out',
-        toggle: '中文'
+        toggle: '中文',
+        denied: 'WebGate: not permitted for this account'
       }
     }
     function detectLang() {
@@ -614,10 +616,34 @@ return {
       })
     }
     const __origFetch = window.fetch
+    // 成员被拒绝的 RPC：设置域全部、创建工作区、跨工作区搜索、创建目录
+    const DENY_METHODS = ['settings.', 'workspace.create', 'session.search', 'host.createDirectory']
+    function deniedResponse(bodyText) {
+      let rpcId = ''
+      try { rpcId = (JSON.parse(bodyText) || {}).rpcId || '' } catch (e) { }
+      return new Response(JSON.stringify({
+        type: 'server-response',
+        rpcId,
+        result: {
+          ok: false,
+          error: { code: 'bad-request', message: t('denied'), details: { issues: [] } }
+        }
+      }), { status: 200, statusText: 'OK', headers: { 'Content-Type': 'application/json' } })
+    }
     window.fetch = function (input, init) {
       const p = __origFetch.apply(this, arguments)
       try {
         if (!PERMS || PERMS.role !== 'member') return p
+        let methodName = ''
+        let bodyText = ''
+        try {
+          bodyText = String((init && init.body) || '')
+          const bj = JSON.parse(bodyText || '{}')
+          methodName = String((bj && bj.method) || '')
+        } catch (e) { }
+        if (methodName && DENY_METHODS.some(function (d) { return methodName === d || methodName.indexOf(d) === 0 })) {
+          return Promise.resolve(deniedResponse(bodyText))
+        }
         const url = typeof input === 'string' ? input : (input && input.url) || ''
         const mth = String((init && init.method) || (input && input.method) || 'GET').toUpperCase()
         if (mth === 'POST' && url.indexOf('/api/workspace.list') >= 0 && typeof Response !== 'undefined') {
@@ -639,6 +665,11 @@ return {
       } catch (e) { }
       return p
     }
+    function applyRoleClass() {
+      if (PERMS && PERMS.role === 'member') document.documentElement.classList.add('wg-member')
+      else document.documentElement.classList.remove('wg-member')
+    }
+    applyRoleClass()
 
     // ---- guard 模式：不渲染遮罩；未认证直接跳转 /login，登录页负责发令牌 ----
     let watchTimer = null
@@ -678,12 +709,14 @@ return {
         PERMS = d.perms
         try { sv('perms', JSON.stringify(d.perms)) } catch (e) { }
       }
+      applyRoleClass()
       document.documentElement.style.visibility = ''
       startWatch(d.username, d.expiresAt || parseInt(lg('exp'), 10) || Date.now())
     }
     function goLogin() {
       rmv('token'); rmv('exp'); rmv('perms')
       PERMS = null
+      applyRoleClass()
       try { document.cookie = 'webgate_token=; Path=/; Max-Age=0; SameSite=Lax' } catch (e) { }
       location.replace('/login')
     }
@@ -738,9 +771,10 @@ return {
       '#wg-gate .wg-langbar{display:flex;justify-content:flex-end;margin-top:6px}',
       '#wg-gate .wg-lang{font-size:11px;color:#679efe;cursor:pointer;opacity:.85;font-family:inherit}',
       '#wg-gate .wg-lang:hover{opacity:1;text-decoration:underline}',
-      '#wg-gate .wg-langbar{display:flex;justify-content:flex-end;margin-top:6px}',
-      '#wg-gate .wg-lang{font-size:11px;color:#679efe;cursor:pointer;opacity:.85;font-family:inherit}',
-      '#wg-gate .wg-lang:hover{opacity:1;text-decoration:underline}',
+      // member 角色下隐藏：设置入口 / 工作区搜索 / 列表头操作区（含添加工作区）
+      // 选择器用 CSS-modules 的"哈希_语义名"后缀匹配，跨构建稳定
+      'html.wg-member [class$="_settingsArea"],html.wg-member [class$="_searchButton"],html.wg-member [class$="_searchSlot"],html.wg-member [class$="_searchExpanded"]{display:none!important}',
+      'html.wg-member [class$="_sectionHeader"] [class$="_headerActions"]{display:none!important}',
       '#wg-gate .wg-wait{margin-top:18px;text-align:center;font-size:13px;color:rgba(158,170,196,.85)}',
       '#wg-gate .wg-spin{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.28);border-top-color:#fff;animation:wgRot .8s linear infinite;display:inline-block}',
       '#wg-gate .wg-spin-lg{width:34px;height:34px;border-width:3px}',

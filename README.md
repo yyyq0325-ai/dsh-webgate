@@ -18,18 +18,26 @@
 
 ## 安装
 
-> ⚠️ npm 注册表上的 `dsh-webgate` 是另一个无关包（远程访问工具，作者 pppolf）。请始终使用下面的 **GitHub 来源或带 scope 的完整包名** 安装本插件。
+> ✅ 本包已发布到 npm：**`@yyyq0325/dsh-webgate`**。npm 安装是现在的推荐方式（版本化、可锁定、无 Git 依赖）。
+> ⚠️ 裸名 `dsh-webgate` 是另一个无关包，请勿使用。
 
-### 方式 A：官方 CLI（推荐）
+### 方式 A：npm（推荐）
 
 ```bash
-# 从 GitHub 直接安装（无需发布到 npm）
+dsh plugin --profile web add @yyyq0325/dsh-webgate
+```
+
+安装命令会依据 `package.json` 的 `dsh.bundle.patch` 声明自动挂载本插件，重启 dsh 后生效。升级同样一条命令（或 `npm update @yyyq0325/dsh-webgate` 后重启）。
+
+### 方式 B：从 GitHub 安装
+
+```bash
 dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 ```
 
-安装命令会依据 `package.json` 的 `dsh.bundle.patch` 声明自动挂载本插件，重启 dsh 后生效。
+适合在官方 npm 版发布前体验最新分支（默认取仓库默认分支；可用 `#分支名` 指定）。
 
-### 方式 B：手动挂载
+### 方式 C：手动挂载
 
 把 [`cordis.patch.yml`](cordis.patch.yml) 中的 insert 行复制进 profile 的补丁文件 `~/.dsh/profiles/web/cordis.patch.yml`：
 
@@ -39,7 +47,7 @@ dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
       name: '@yyyq0325/dsh-webgate'
 ```
 
-并确保本包已安装到 profile 可解析的位置（如 profile 目录下 `npm i github:yyyq0325-ai/dsh-webgate`）。
+并确保本包已安装到 profile 可解析的位置（如 profile 目录下 `npm i @yyyq0325/dsh-webgate`）。
 
 ### 方式 C：临时动态插件（免安装）
 
@@ -78,6 +86,7 @@ dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 - **admin**：拥有全部工作区与管理能力（初始 `admin` 账号即为 admin）。
 - **member**：登录后只能看到被 `/grant` 授予的工作区（按完整路径或标题匹配，大小写不敏感），未被授予的条目会在客户端被过滤隐藏，对其余工作区的操作无从发起。
 - 授权变更会立即撤销该成员的现有会话，重新登录后生效新权限。
+- **界面裁剪**：member 会话自动隐藏左下角设置入口、工作区搜索按钮与列表头操作区（含添加工作区）；同时拒绝 `settings.*`、`workspace.create`、`session.search`、`host.createDirectory` 等 RPC（返回标准错误信封，界面优雅报错）。
 - ⚠️ 强度说明：工作区过滤运行在浏览器端（守卫脚本包装 fetch 实现），定位是"防误触"而非对抗有意绕过——详见下方[安全边界](#安全边界请务必阅读)。服务端级强制需要上游提供中间件/网关鉴权点。
 
 诊断接口：`GET /auth/api/health` 返回服务可用性与用户库状态。

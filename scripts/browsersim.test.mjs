@@ -184,6 +184,22 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
   const listResp2 = await env.window.fetch('/api/workspace.list', { method: 'POST', body: '{}' })
   expect('J3 复核后仍过滤', (await listResp2.json()).result.value.items.length === 1)
 
+  // 成员：html 标记与受限 RPC 拒绝
+  expect('J4 html 获得 wg-member 类', env.documentElement.className.includes('wg-member'))
+  const deny = async (method) => {
+    const r = await env.window.fetch('/api/' + method, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'client-request', rpcId: 'r-' + method, method, payload: {} })
+    })
+    return r.json()
+  }
+  const d1 = await deny('settings.describe')
+  expect('J5 settings.describe 被拒', d1.result.ok === false && d1.result.error.code === 'bad-request')
+  const d2 = await deny('workspace.create')
+  expect('J6 workspace.create 被拒', d2.result.ok === false)
+  const d3 = await deny('session.search')
+  expect('J7 session.search 被拒', d3.result.ok === false)
+
   // ---- K: admin 不受过滤 ----
   env = buildEnv({
     storage: {
@@ -200,6 +216,13 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
   await tick()
   const r2 = await env.window.fetch('/api/workspace.list', { method: 'POST', body: '{}' })
   expect('K1 admin 看到全部工作区', (await r2.json()).result.value.items.length === 2)
+  expect('K2 admin 无 wg-member 类', !env.documentElement.className.includes('wg-member'))
+  const ka = await env.window.fetch('/api/settings.describe', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'client-request', rpcId: 'r-k', method: 'settings.describe', payload: {} })
+  })
+  const kaj = await ka.json()
+  expect('K3 admin 可访问设置域（未被拦截）', !(kaj.result && kaj.result.error && kaj.result.error.code === 'bad-request'))
 
   // ---- C: 守卫 + 服务端判定失效 → 清令牌并跳转 ----
   env = buildEnv({

@@ -18,16 +18,26 @@ Add a username/password gate to the [DeepSeek Harness](https://github.com/deepse
 
 ## Install
 
-> ⚠️ `dsh-webgate` on the npm registry is an unrelated package (a remote-access tool by pppolf). Always install from the **GitHub source** or with the **full scoped name**.
+> ✅ Published on npm: **`@yyyq0325/dsh-webgate`** — npm is now the recommended channel (versioned, lockable, no Git dependency).
+> ⚠️ The bare name `dsh-webgate` is an unrelated package; don't use it.
 
-### Option A — official CLI (recommended)
+### Option A — npm (recommended)
 
 ```bash
-# Install straight from GitHub (no npm publish needed)
+dsh plugin --profile web add @yyyq0325/dsh-webgate
+```
+
+The CLI auto-mounts the plugin via the `dsh.bundle.patch` declaration in `package.json`; restart dsh to activate. Upgrades are the same command (or `npm update @yyyq0325/dsh-webgate` + restart).
+
+### Option B — from GitHub
+
+```bash
 dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 ```
 
-### Option B — manual mount
+Useful for trying the latest branch before an npm release (`#branch` supported).
+
+### Option C — manual mount
 
 Copy the insert row from [`cordis.patch.yml`](cordis.patch.yml) into your profile's patch file:
 
@@ -74,7 +84,8 @@ User management (**every mutating command requires an admin account's password a
 - **admin**: full access to all workspaces and management (the initial `admin` account).
 - **member**: after sign-in only workspaces granted via `/grant` are visible (matched by full path or title, case-insensitive); other entries are filtered out client-side and their actions cannot be initiated from the UI.
 - Permission changes immediately revoke that member's active sessions; new permissions apply on next sign-in.
-- ⚠️ Strength: workspace filtering runs in the browser (the guard script wraps fetch) — it is **mistake-proofing**, not adversarial protection. See [Security notes](#security-notes). Server-side enforcement requires upstream middleware/gateway hooks.
+- **UI trimming**: member sessions automatically hide the settings entry (sidebar foot), the workspace search button and the list-header actions (incl. add-workspace); restricted RPCs (`settings.*`, `workspace.create`, `session.search`, `host.createDirectory`) are rejected with a standard error envelope so the UI fails gracefully.
+- ⚠️ Strength: all filtering/hiding runs in the browser (the guard script) — it is **mistake-proofing**, not adversarial protection. See [Security notes](#security-notes). Server-side enforcement requires upstream middleware/gateway hooks.
 
 Health probe: `GET /auth/api/health`.
 
