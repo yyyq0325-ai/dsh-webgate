@@ -4,6 +4,16 @@ English | [中文](CHANGELOG.zh.md)
 
 Every notable feature and fix lands here, **newest first**. See the [README](README_EN.md) for install and usage.
 
+## 0.2.1 · 2026-08-24
+
+Fixes for "member still sees every workspace" on real installs.
+
+### Fixed
+
+- **URL-object inputs**: the app transport calls the guard as `doFetch(new URL(path, base))` — a `URL` instance has `.href` but no `.url`, so the request probe extracted an empty string and the `workspace.list` filter never fired. The probe now resolves `href`/`url` and matches pathnames via pure string parsing, without relying on the URL constructor
+- **Basename grants**: grants are commonly written as a bare folder name (`park`) while `WorkspaceView.path` is absolute (`D:\code\park`); exact equality never matched. Matchers now also hit when the path ends with `<sep><matcher>`, in addition to full-path and title equality
+- browsersim J-suite mirrors the real transport shape (URL-object input + basename grant) to lock both fixes in
+
 ## 0.2.0 · 2026-08-24 (experimental)
 
 Account roles and workspace grants.
