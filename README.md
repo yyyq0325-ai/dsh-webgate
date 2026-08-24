@@ -2,6 +2,8 @@
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 Web GUI 加一道账号密码门：每次打开 DSH Web 都必须先登录；登录令牌有效期 **12 小时**；令牌过期被登出时，**后台正在运行的任务完全不受影响**，重新登录后一切还在。
 
+📋 更新日志（新功能与破坏性变更都记录在这里）：**[CHANGELOG.zh.md](CHANGELOG.zh.md)**
+
 ![login](docs/login-preview.png)
 
 ## 特性
@@ -13,22 +15,31 @@
 - 🛠 **用户管理命令** — `/useradd` `/passwd` `/userlist` `/userdel`（密码不写入会话日志），另有 `webgate_user_*` 模型工具可让 Agent 代管
 - 💾 **持久化** — 用户库存放在 `$DSH_HOME/.credentials.yaml` 的 grant record 中，随 Harness 自身凭据文件一起管理，插件重启自动恢复
 - 🌐 **中英双语，默认中文** — 登录卡片右下角可一键切换「EN / 中文」（偏好记忆在本地）；英文浏览器自动切换；API 错误消息跟随请求的 `Accept-Language`
+- 👥 **账号角色与工作区授权（实验性）** — admin / member 两级角色；成员仅能看到被 `/grant` 授予的工作区；所有变更命令采用「管理员密码 sudo」模式
 - 🧩 **零依赖** — 纯 JavaScript 单文件实现；动态沙箱里没有 node:crypto，密码哈希使用内置 PBKDF2-HMAC-SHA256（20000 次迭代，已通过标准测试向量验证）
 
 ## 安装
 
-> ⚠️ npm 注册表上的 `dsh-webgate` 是另一个无关包（远程访问工具，作者 pppolf）。请始终使用下面的 **GitHub 来源或带 scope 的完整包名** 安装本插件。
+> ✅ 本包已发布到 npm：**`@yyyq0325/dsh-webgate`**。npm 安装是现在的推荐方式（版本化、可锁定、无 Git 依赖）。
+> ⚠️ 裸名 `dsh-webgate` 是另一个无关包，请勿使用。
 
-### 方式 A：官方 CLI（推荐）
+### 方式 A：npm（推荐）
 
 ```bash
-# 从 GitHub 直接安装（无需发布到 npm）
+dsh plugin --profile web add @yyyq0325/dsh-webgate
+```
+
+安装命令会依据 `package.json` 的 `dsh.bundle.patch` 声明自动挂载本插件，重启 dsh 后生效。升级同样一条命令（或 `npm update @yyyq0325/dsh-webgate` 后重启）。
+
+### 方式 B：从 GitHub 安装
+
+```bash
 dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 ```
 
-安装命令会依据 `package.json` 的 `dsh.bundle.patch` 声明自动挂载本插件，重启 dsh 后生效。
+适合在官方 npm 版发布前体验最新分支（默认取仓库默认分支；可用 `#分支名` 指定）。
 
-### 方式 B：手动挂载
+### 方式 C：手动挂载
 
 把 [`cordis.patch.yml`](cordis.patch.yml) 中的 insert 行复制进 profile 的补丁文件 `~/.dsh/profiles/web/cordis.patch.yml`：
 
@@ -38,7 +49,7 @@ dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
       name: '@yyyq0325/dsh-webgate'
 ```
 
-并确保本包已安装到 profile 可解析的位置（如 profile 目录下 `npm i github:yyyq0325-ai/dsh-webgate`）。
+并确保本包已安装到 profile 可解析的位置（如 profile 目录下 `npm i @yyyq0325/dsh-webgate`）。
 
 ### 方式 C：临时动态插件（免安装）
 
@@ -61,14 +72,24 @@ dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 
 界面语言：登录卡片右下角点击「EN / 中文」即可切换并记住偏好；默认中文，英文浏览器自动切换为英文。`/auth/page` 独立页与全部 API 提示同样双语（接口按 `Accept-Language` 协商）。
 
-添加更多用户 / 管理：
+添加用户 / 管理（**所有变更命令都要求在末尾附带任意管理员账号的密码**，即"sudo 口令"模式——只有知道管理员密码的人才能改动账号体系）：
 
 | 命令 | 说明 |
 |---|---|
-| `/useradd <用户名> <密码>` | 添加用户（用户名 2-32 位字母数字点下划线短横线；密码 6-128 位） |
-| `/passwd <用户名> <新密码>` | 修改密码，该用户现有会话立即全部失效 |
-| `/userlist` | 列出用户、创建时间与活跃会话数 |
-| `/userdel <用户名>` | 删除用户（至少保留一个） |
+| `/useradd <用户名> <密码> <管理员密码>` | 添加 member 用户（用户名 2-32 位字母数字点下划线短横线；密码 6-128 位） |
+| `/passwd <用户名> <新密码> <管理员密码>` | 修改密码，该用户现有会话立即全部失效 |
+| `/userlist` | 列出用户、角色、工作区授权与活跃会话数 |
+| `/userdel <用户名> <管理员密码>` | 删除用户（至少保留一个管理员） |
+| `/grant <用户名> <工作区路径\|标题\|*> <管理员密码>` | 授予成员一个工作区的可见性；`*` 表示全部 |
+| `/revoke <用户名> <工作区路径\|标题\|*\|all> <管理员密码>` | 撤销成员的工作区可见性；`*`/`all` 清空全部授权 |
+
+## 角色与工作区权限（v0.2.0 · 实验性）
+
+- **admin**：拥有全部工作区与管理能力（初始 `admin` 账号即为 admin）。
+- **member**：登录后只能看到被 `/grant` 授予的工作区（按完整路径或标题匹配，大小写不敏感），未被授予的条目会在客户端被过滤隐藏，对其余工作区的操作无从发起。
+- 授权变更会立即撤销该成员的现有会话，重新登录后生效新权限。
+- **界面裁剪**：member 会话自动隐藏左下角设置入口、工作区搜索按钮与列表头操作区（含添加工作区）；同时拒绝 `settings.*`、`workspace.create`、`session.search`、`host.createDirectory` 等 RPC（返回标准错误信封，界面优雅报错）。
+- ⚠️ 强度说明：工作区过滤运行在浏览器端（守卫脚本包装 fetch 实现），定位是"防误触"而非对抗有意绕过——详见下方[安全边界](#安全边界请务必阅读)。服务端级强制需要上游提供中间件/网关鉴权点。
 
 诊断接口：`GET /auth/api/health` 返回服务可用性与用户库状态。
 

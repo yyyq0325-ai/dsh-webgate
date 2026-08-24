@@ -57,6 +57,8 @@ class El {
   get innerHTML() { return this._html }
 }
 
+process.on('unhandledRejection', r => console.log('[UNHANDLED]', (r && r.stack) || r))
+
 let failures = 0
 function expect(name, cond) {
   if (!cond) failures++
@@ -85,16 +87,28 @@ function buildEnv({ storage = {}, responder, row = GUARD_ROW, search = '' }) {
   }
   const intervals = []
   let iid = 0
+  class FakeResponse {
+    constructor(body, init) {
+      this.status = (init && init.status) || 200
+      this.statusText = (init && init.statusText) || ''
+      this.headers = (init && init.headers) || {}
+      this._body = body
+    }
+    json() { return Promise.resolve(typeof this._body === 'string' ? JSON.parse(this._body) : this._body) }
+    clone() { return this }
+  }
+  const globalFetch = (url, opts) => {
+    const payload = responder(url, opts)
+    if (payload && typeof payload.then === 'function') return payload
+    return Promise.resolve(new FakeResponse(payload))
+  }
   const sandbox = {
-    window: { location: locationObj, localStorage: { getItem: k => (k in st ? st[k] : null), setItem: (k, v) => { st[k] = String(v) }, removeItem: k => { delete st[k] } } },
+    window: { fetch: globalFetch, location: locationObj, localStorage: { getItem: k => (k in st ? st[k] : null), setItem: (k, v) => { st[k] = String(v) }, removeItem: k => { delete st[k] } } },
     document: documentObj,
     location: locationObj,
     URLSearchParams,
-    fetch: (url, opts) => {
-      const payload = responder(url, opts)
-      if (payload && typeof payload.then === 'function') return payload
-      return Promise.resolve({ json: () => Promise.resolve(payload) })
-    },
+    Response: FakeResponse,
+    fetch: globalFetch,
     setInterval: (fn, ms) => { intervals.push({ fn, ms, id: ++iid }); return iid },
     clearInterval: id => { const i = intervals.findIndex(x => x.id === id); if (i >= 0) intervals.splice(i, 1) },
     setTimeout: (fn) => Promise.resolve().then(fn),
@@ -105,9 +119,8 @@ function buildEnv({ storage = {}, responder, row = GUARD_ROW, search = '' }) {
   Object.defineProperty(documentObj, 'cookie', { get: () => sandbox.document_cookie, set: v => { sandbox.document_cookie = v } })
   sandbox.globalThis = sandbox
   const context = vm.createContext(sandbox)
-  process.on('unhandledRejection', r => console.log('[UNHANDLED]', (r && r.stack) || r))
   vm.runInContext(row, context, { filename: 'webgate-row.js' })
-  return { storage: st, documentElement, body, intervals, docListeners, location: locationObj, reloads: () => reloads, replaces: () => replaces }
+  return { storage: st, documentElement, body, window: sandbox.window, __globalFetch: globalFetch, intervals, docListeners, location: locationObj, reloads: () => reloads, replaces: () => replaces }
 }
 const tick = () => new Promise(r => setTimeout(r, 20))
 const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate')
@@ -125,7 +138,7 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
     storage: { 'dshWebgate.token': 'TK-live', 'dshWebgate.exp': String(Date.now() + 3600000) },
     responder: (url, opts) => {
       const b = JSON.parse(opts.body)
-      if (url.endsWith('/session') && b.token === 'TK-live') return { ok: true, valid: true, username: 'admin', expiresAt: Date.now() + 3600000 }
+      if (url.endsWith('/session') && b.token === 'TK-live') return { ok: true, valid: true, username: 'admin', expiresAt: Date.now() + 3600000, perms: { role: 'admin', workspaces: ['*'] } }
       return { ok: false }
     },
   })
@@ -138,6 +151,78 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
   ;(env.docListeners.visibilitychange || []).forEach(f => f())
   await tick()
   expect('B5 页面可见性复核通过', env.replaces().length === 0)
+  expect('B6 会话响应写入本地 perms', (env.storage['dshWebgate.perms'] || '').includes('"role":"admin"'))
+
+  // ---- J: 成员工作区过滤（fetch 包装）----
+  const wsItems = [
+    { workspaceId: 'w1', path: 'D:\\proj-a', title: 'A', sessionIds: [], createdAt: '', updatedAt: '' },
+    { workspaceId: 'w2', path: 'D:\\proj-b', title: 'B', sessionIds: [], createdAt: '', updatedAt: '' },
+  ]
+  const listEnvelope = () => ({ type: 'server-response', rpcId: 'x', result: { ok: true, value: { items: JSON.parse(JSON.stringify(wsItems)), archivedSessionIds: [] } } })
+  const memberResponder = (url, opts) => {
+    const b = JSON.parse(opts.body)
+    if (url.endsWith('/api/workspace.list')) return listEnvelope()
+    if (url.endsWith('/session') && b.token === 'TK-m') return { ok: true, valid: true, username: 'alice', expiresAt: Date.now() + 3600000, perms: { role: 'member', workspaces: ['d:\\proj-a'] } }
+    return { ok: false }
+  }
+  env = buildEnv({
+    storage: {
+      'dshWebgate.token': 'TK-m', 'dshWebgate.exp': String(Date.now() + 3600000),
+      'dshWebgate.perms': JSON.stringify({ role: 'member', workspaces: ['d:\\proj-a'] }),
+    },
+    responder: memberResponder,
+  })
+  await tick()
+  expect('J1 成员会话不跳转', env.replaces().length === 0)
+  const listResp = await env.window.fetch('/api/workspace.list', { method: 'POST', body: '{}' })
+  const lj = await listResp.json()
+  const jItems = lj.result.value.items
+  expect('J2 workspace.list 过滤到授权项', Array.isArray(jItems) && jItems.length === 1 && jItems[0].path === 'D:\\proj-a')
+  // 刷新 perms 后（会话复核返回同样权限）仍保持过滤
+  ;(env.docListeners.visibilitychange || []).forEach(f => f())
+  await tick()
+  const listResp2 = await env.window.fetch('/api/workspace.list', { method: 'POST', body: '{}' })
+  expect('J3 复核后仍过滤', (await listResp2.json()).result.value.items.length === 1)
+
+  // 成员：html 标记与受限 RPC 拒绝
+  expect('J4 html 获得 wg-member 类', env.documentElement.className.includes('wg-member'))
+  const deny = async (method) => {
+    const r = await env.window.fetch('/api/' + method, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'client-request', rpcId: 'r-' + method, method, payload: {} })
+    })
+    return r.json()
+  }
+  const d1 = await deny('settings.describe')
+  expect('J5 settings.describe 被拒', d1.result.ok === false && d1.result.error.code === 'bad-request')
+  const d2 = await deny('workspace.create')
+  expect('J6 workspace.create 被拒', d2.result.ok === false)
+  const d3 = await deny('session.search')
+  expect('J7 session.search 被拒', d3.result.ok === false)
+
+  // ---- K: admin 不受过滤 ----
+  env = buildEnv({
+    storage: {
+      'dshWebgate.token': 'TK-a2', 'dshWebgate.exp': String(Date.now() + 3600000),
+      'dshWebgate.perms': JSON.stringify({ role: 'admin', workspaces: ['*'] }),
+    },
+    responder: (url, opts) => {
+      const b = JSON.parse(opts.body)
+      if (url.endsWith('/api/workspace.list')) return listEnvelope()
+      if (url.endsWith('/session') && b.token === 'TK-a2') return { ok: true, valid: true, username: 'admin', expiresAt: Date.now() + 3600000, perms: { role: 'admin', workspaces: ['*'] } }
+      return { ok: false }
+    },
+  })
+  await tick()
+  const r2 = await env.window.fetch('/api/workspace.list', { method: 'POST', body: '{}' })
+  expect('K1 admin 看到全部工作区', (await r2.json()).result.value.items.length === 2)
+  expect('K2 admin 无 wg-member 类', !env.documentElement.className.includes('wg-member'))
+  const ka = await env.window.fetch('/api/settings.describe', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'client-request', rpcId: 'r-k', method: 'settings.describe', payload: {} })
+  })
+  const kaj = await ka.json()
+  expect('K3 admin 可访问设置域（未被拦截）', !(kaj.result && kaj.result.error && kaj.result.error.code === 'bad-request'))
 
   // ---- C: 守卫 + 服务端判定失效 → 清令牌并跳转 ----
   env = buildEnv({

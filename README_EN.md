@@ -4,6 +4,8 @@
 
 Add a username/password gate to the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) web GUI: every visit to DSH Web requires a login first. Session tokens last **12 hours**, and when a token expires, **background tasks keep running** — log back in and everything is still there.
 
+📋 Changelog (new features and breaking changes are recorded here): **[CHANGELOG.en.md](CHANGELOG.en.md)**
+
 ## Features
 
 - 🔐 **Route-level login gate** — a synchronous guard script injected into every `index.html` via the `webserver/index-inject` event: missing or expired tokens trigger `location.replace('/login')` (a standalone bilingual login page); after sign-in you are redirected back. The guard hides the document synchronously, so app content never flashes
@@ -13,20 +15,31 @@ Add a username/password gate to the [DeepSeek Harness](https://github.com/deepse
 - 🛠 **User management commands** — `/useradd`, `/passwd`, `/userlist`, `/userdel` (passwords never hit the session log), plus `webgate_user_*` model tools so your agent can manage accounts
 - 💾 **Persistent user store** — kept as a grant record inside `$DSH_HOME/.credentials.yaml`, restored automatically on plugin restart
 - 🌐 **Bilingual (Chinese default)** — one-click 中文/EN toggle on the login card (remembered locally); English browsers switch automatically; API messages follow the request's `Accept-Language`
+- 👥 **Roles & workspace grants (experimental)** — admin/member roles; members only see workspaces granted via `/grant`; mutating commands use an admin-password sudo model
 - 🧩 **Zero dependencies** — single-file pure JavaScript; PBKDF2-HMAC-SHA256 (20k iterations) implemented in-repo for sandboxes without `node:crypto`, validated against standard test vectors
 
 ## Install
 
-> ⚠️ `dsh-webgate` on the npm registry is an unrelated package (a remote-access tool by pppolf). Always install from the **GitHub source** or with the **full scoped name**.
+> ✅ Published on npm: **`@yyyq0325/dsh-webgate`** — npm is now the recommended channel (versioned, lockable, no Git dependency).
+> ⚠️ The bare name `dsh-webgate` is an unrelated package; don't use it.
 
-### Option A — official CLI (recommended)
+### Option A — npm (recommended)
 
 ```bash
-# Install straight from GitHub (no npm publish needed)
+dsh plugin --profile web add @yyyq0325/dsh-webgate
+```
+
+The CLI auto-mounts the plugin via the `dsh.bundle.patch` declaration in `package.json`; restart dsh to activate. Upgrades are the same command (or `npm update @yyyq0325/dsh-webgate` + restart).
+
+### Option B — from GitHub
+
+```bash
 dsh plugin --profile web add github:yyyq0325-ai/dsh-webgate
 ```
 
-### Option B — manual mount
+Useful for trying the latest branch before an npm release (`#branch` supported).
+
+### Option C — manual mount
 
 Copy the insert row from [`cordis.patch.yml`](cordis.patch.yml) into your profile's patch file:
 
@@ -57,12 +70,24 @@ Change it immediately after logging in:
 
 UI language: use the 中文/EN link at the bottom of the login card; defaults to Chinese, English browsers switch automatically. The standalone `/auth/page` and all API messages are localized too (`Accept-Language`).
 
+User management (**every mutating command requires an admin account's password at the end** — a sudo-passphrase model, so only someone who knows the admin password can change the account system):
+
 | Command | Description |
 |---|---|
-| `/useradd <name> <pass>` | Add a user (name: 2–32 chars `[A-Za-z0-9_.-]`; pass: 6–128 chars) |
-| `/passwd <name> <new-pass>` | Change password; revokes that user's active sessions |
-| `/userlist` | List users with creation time and active sessions |
-| `/userdel <name>` | Delete a user (at least one must remain) |
+| `/useradd <name> <pass> <admin-password>` | Add a member user (name: 2–32 chars `[A-Za-z0-9_.-]`; pass: 6–128 chars) |
+| `/passwd <name> <new-pass> <admin-password>` | Change password; revokes that user's active sessions |
+| `/userlist` | List users with role, workspace grants and active sessions |
+| `/userdel <name> <admin-password>` | Delete a user (at least one admin must remain) |
+| `/grant <name> <workspace-path\|title\|*> <admin-password>` | Grant a member visibility of one workspace; `*` = all |
+| `/revoke <name> <workspace-path\|title\|*\|all> <admin-password>` | Revoke; `*`/`all` clears every grant |
+
+## Roles & workspace permissions (v0.2.0 · experimental)
+
+- **admin**: full access to all workspaces and management (the initial `admin` account).
+- **member**: after sign-in only workspaces granted via `/grant` are visible (matched by full path or title, case-insensitive); other entries are filtered out client-side and their actions cannot be initiated from the UI.
+- Permission changes immediately revoke that member's active sessions; new permissions apply on next sign-in.
+- **UI trimming**: member sessions automatically hide the settings entry (sidebar foot), the workspace search button and the list-header actions (incl. add-workspace); restricted RPCs (`settings.*`, `workspace.create`, `session.search`, `host.createDirectory`) are rejected with a standard error envelope so the UI fails gracefully.
+- ⚠️ Strength: all filtering/hiding runs in the browser (the guard script) — it is **mistake-proofing**, not adversarial protection. See [Security notes](#security-notes). Server-side enforcement requires upstream middleware/gateway hooks.
 
 Health probe: `GET /auth/api/health`.
 

@@ -170,8 +170,19 @@ return {
   }
 
   // ---------- 用户存储（credentials grant record，持久化于 $DSH_HOME/.credentials.yaml） ----------
-  let usersCache = null // { username: {hash, salt, iter, createdAt} }
+  // 记录 v2：每个用户带 role('admin'|'member') 与 workspaces(可见工作区匹配器数组，
+  // 成员用；'*' 表示全部)。旧记录读取时自动迁移。
+  let usersCache = null
   const diag = { credsFound: !!creds, webFound: !!web, commandsFound: !!commandsSvc, lastPersistError: '', persistCount: 0 }
+  function normalizeUsers(users) {
+    for (const name of Object.keys(users)) {
+      const r = users[name]
+      if (!r || typeof r !== 'object') continue
+      if (r.role !== 'admin' && r.role !== 'member') r.role = name === INITIAL_USER ? 'admin' : 'member'
+      if (!Array.isArray(r.workspaces)) r.workspaces = []
+    }
+    return users
+  }
   function parseUsersRecord(rec) {
     // payload 存的是 JSON 字符串（跨 realm 安全）；兼容旧的直接对象形态
     if (!rec || rec.kind !== 'grant') return null
@@ -188,7 +199,7 @@ return {
     if (!creds) { if (!usersCache) usersCache = {}; return Promise.resolve() }
     return creds.readRecord(STORE_KEY).then(function (rec) {
       const u = parseUsersRecord(rec)
-      if (u) usersCache = u
+      if (u) usersCache = normalizeUsers(u)
       else if (!usersCache) usersCache = {}
     }).catch(function (e) {
       console.error('[webgate] 读取用户记录失败：' + ((e && e.message) || e))
@@ -284,31 +295,47 @@ return {
     if (typeof p !== 'string' || p.length < 6 || p.length > 128) return '密码长度需为 6-128 位 | Password length must be 6-128 characters'
     return null
   }
-  function addUserCore(username, password) {
-    const u = String(username || '').trim()
-    const err = validateUsername(u) || validatePassword(password)
+  // ---------- 管理员鉴权（角色 + 口令确认；命令/工具变更操作必须携带） ----------
+  function verifyAdminAuth(adminPassword) {
+    if (typeof adminPassword !== 'string' || !adminPassword) {
+      return '该操作需要管理员权限：请在命令末尾附带管理员密码 | Admin permission required: append the admin password to the command'
+    }
+    if (!usersCache) return '用户库尚未初始化，请稍后再试 | User store is not initialized yet, please retry'
+    for (const name of Object.keys(usersCache)) {
+      const rec = usersCache[name]
+      if (rec && rec.role === 'admin' && rec.salt && rec.hash
+        && constantTimeEqual(hashPassword(adminPassword, rec.salt, rec.iter || PBKDF2_ITER), rec.hash)) return null
+    }
+    return '管理员密码错误 | Incorrect admin password'
+  }
+  function addUserCore(username, password, adminPassword) {
+    let err = verifyAdminAuth(adminPassword)
     if (err) return Promise.resolve({ ok: false, message: err })
-    if (!usersCache) return Promise.resolve({ ok: false, message: '用户库尚未初始化，请稍后再试 | User store is not initialized yet, please retry' })
+    const u = String(username || '').trim()
+    err = validateUsername(u) || validatePassword(password)
+    if (err) return Promise.resolve({ ok: false, message: err })
     if (usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」已存在 | User "' + u + '" already exists' })
     const salt = randomHex(16)
-    usersCache[u] = { hash: hashPassword(password, salt, PBKDF2_ITER), salt, iter: PBKDF2_ITER, createdAt: new Date().toISOString() }
+    usersCache[u] = { role: 'member', workspaces: [], hash: hashPassword(password, salt, PBKDF2_ITER), salt, iter: PBKDF2_ITER, createdAt: new Date().toISOString() }
     return persistUsers().then(function () {
       console.log('[webgate] 已添加用户: ' + u)
-      return { ok: true, message: '用户「' + u + '」添加成功 | User "' + u + '" added' }
+      return { ok: true, message: '用户「' + u + '」添加成功（member，无工作区权限）| User "' + u + '" added (member, no workspaces)' }
     }).catch(function (e) {
       delete usersCache[u]
       console.error('[webgate] 写入用户失败：' + ((e && e.message) || e))
       return { ok: false, message: '写入用户库失败，详见 Host 日志 | Failed to write user store, see host logs' }
     })
   }
-  function passwdCore(username, password) {
-    const u = String(username || '').trim()
-    const err = validateUsername(u) || validatePassword(password)
+  function passwdCore(username, password, adminPassword) {
+    let err = verifyAdminAuth(adminPassword)
     if (err) return Promise.resolve({ ok: false, message: err })
-    if (!usersCache || !usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」不存在 | User "' + u + '" does not exist' })
+    const u = String(username || '').trim()
+    err = validateUsername(u) || validatePassword(password)
+    if (err) return Promise.resolve({ ok: false, message: err })
+    if (!usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」不存在 | User "' + u + '" does not exist' })
     const salt = randomHex(16)
     const prev = usersCache[u]
-    usersCache[u] = { hash: hashPassword(password, salt, PBKDF2_ITER), salt, iter: PBKDF2_ITER, createdAt: prev.createdAt }
+    usersCache[u] = { role: prev.role, workspaces: prev.workspaces, hash: hashPassword(password, salt, PBKDF2_ITER), salt, iter: PBKDF2_ITER, createdAt: prev.createdAt }
     return persistUsers().then(function () {
       revokeUserTokens(u)
       console.log('[webgate] 已修改用户密码: ' + u)
@@ -319,10 +346,15 @@ return {
       return { ok: false, message: '写入用户库失败，详见 Host 日志 | Failed to write user store, see host logs' }
     })
   }
-  function delUserCore(username) {
+  function delUserCore(username, adminPassword) {
+    let err = verifyAdminAuth(adminPassword)
+    if (err) return Promise.resolve({ ok: false, message: err })
     const u = String(username || '').trim()
-    if (!usersCache || !usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」不存在 | User "' + u + '" does not exist' })
+    if (!usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」不存在 | User "' + u + '" does not exist' })
     if (Object.keys(usersCache).length <= 1) return Promise.resolve({ ok: false, message: '至少需要保留一个用户 | At least one user must remain' })
+    if (usersCache[u].role === 'admin' && Object.keys(usersCache).filter(n => usersCache[n].role === 'admin').length <= 1) {
+      return Promise.resolve({ ok: false, message: '至少需要保留一个管理员 | At least one admin must remain' })
+    }
     const prev = usersCache[u]
     delete usersCache[u]
     return persistUsers().then(function () {
@@ -334,6 +366,60 @@ return {
       return { ok: false, message: '写入用户库失败，详见 Host 日志 | Failed to write user store, see host logs' }
     })
   }
+  // 授予 / 撤销成员的工作区可见性。匹配器：工作区完整路径或标题（大小写不敏感），'*' 表示全部。
+  function normalizeMatcher(m) { return String(m == null ? '' : m).trim().toLowerCase() }
+  function grantCore(username, matcher, adminPassword) {
+    let err = verifyAdminAuth(adminPassword)
+    if (err) return Promise.resolve({ ok: false, message: err })
+    const u = String(username || '').trim()
+    const m = normalizeMatcher(matcher)
+    if (!usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」不存在 | User "' + u + '" does not exist' })
+    if (!m) return Promise.resolve({ ok: false, message: '缺少工作区路径或 * | Missing workspace path or *' })
+    const prev = usersCache[u]
+    if (!Array.isArray(prev.workspaces)) prev.workspaces = []
+    if (m === '*') prev.workspaces = ['*']
+    else if (!prev.workspaces.some(x => x.toLowerCase() === m)) prev.workspaces.push(m)
+    else return Promise.resolve({ ok: true, message: '用户「' + u + '」已拥有该工作区权限 | User "' + u + '" already has this workspace' })
+    return persistUsers().then(function () {
+      revokeUserTokens(u)
+      return { ok: true, message: '已授予「' + u + '」工作区「' + m + '」（其会话已刷新）| Granted workspace "' + m + '" to "' + u + '" (sessions refreshed)' }
+    }).catch(function (e) {
+      usersCache[u] = prev
+      console.error('[webgate] 授权写入失败：' + ((e && e.message) || e))
+      return { ok: false, message: '写入用户库失败，详见 Host 日志 | Failed to write user store, see host logs' }
+    })
+  }
+  function revokeCore(username, matcher, adminPassword) {
+    let err = verifyAdminAuth(adminPassword)
+    if (err) return Promise.resolve({ ok: false, message: err })
+    const u = String(username || '').trim()
+    const m = normalizeMatcher(matcher)
+    if (!usersCache[u]) return Promise.resolve({ ok: false, message: '用户「' + u + '」不存在 | User "' + u + '" does not exist' })
+    if (!m) return Promise.resolve({ ok: false, message: '缺少工作区路径、* 或 all | Missing workspace path, * or all' })
+    const prev = usersCache[u]
+    const before = Array.isArray(prev.workspaces) ? prev.workspaces.slice() : []
+    let after
+    if (m === '*' || m === 'all') after = []
+    else after = before.filter(x => x.toLowerCase() !== m)
+    if (after.length === before.length && m !== '*' && m !== 'all') {
+      return Promise.resolve({ ok: false, message: '该用户没有此工作区权限 | User has no such workspace grant' })
+    }
+    prev.workspaces = after
+    return persistUsers().then(function () {
+      revokeUserTokens(u)
+      return { ok: true, message: '已撤销「' + u + '」的工作区「' + m + '」（其会话已刷新）| Revoked workspace "' + m + '" from "' + u + '" (sessions refreshed)' }
+    }).catch(function (e) {
+      usersCache[u] = prev
+      console.error('[webgate] 撤销写入失败：' + ((e && e.message) || e))
+      return { ok: false, message: '写入用户库失败，详见 Host 日志 | Failed to write user store, see host logs' }
+    })
+  }
+  function permsFor(u) {
+    const rec = usersCache[u]
+    if (!rec) return null
+    if (rec.role === 'admin') return { role: 'admin', workspaces: ['*'] }
+    return { role: 'member', workspaces: Array.isArray(rec.workspaces) ? rec.workspaces : [] }
+  }
   function listUsersCore() {
     if (!usersCache) return []
     const activeByUser = {}
@@ -342,7 +428,14 @@ return {
       activeByUser[u] = (activeByUser[u] || 0) + 1
     })
     return Object.keys(usersCache).map(function (u) {
-      return { username: u, createdAt: usersCache[u].createdAt || '', activeSessions: activeByUser[u] || 0 }
+      const r = usersCache[u]
+      return {
+        username: u,
+        role: r.role || 'member',
+        workspaces: Array.isArray(r.workspaces) ? r.workspaces.join(', ') : '',
+        createdAt: r.createdAt || '',
+        activeSessions: activeByUser[u] || 0
+      }
     })
   }
 
@@ -368,7 +461,8 @@ return {
         offline: '无法连接认证服务', retry: '重试',
         foot1: '登录会话有效期 12 小时', foot2: '后台任务持续运行，不受登出影响',
         hoursLeft: '剩余约 {n} 小时', signout: '退出',
-        toggle: 'EN'
+        toggle: 'EN',
+        denied: 'WebGate：当前账号无权执行该操作'
       },
       en: {
         sub: 'Harness Console · Sign in',
@@ -380,7 +474,8 @@ return {
         offline: 'Cannot reach the auth service', retry: 'Retry',
         foot1: 'Sessions last 12 hours', foot2: 'Background tasks keep running while signed out',
         hoursLeft: '~{n} h left', signout: 'Sign out',
-        toggle: '中文'
+        toggle: '中文',
+        denied: 'WebGate: not permitted for this account'
       }
     }
     function detectLang() {
@@ -495,6 +590,7 @@ return {
         const saved = pg.__wgSaved || {}
         bindLoginForm(pg, function (d) {
           sv('token', d.token); sv('exp', d.expiresAt)
+          try { sv('perms', JSON.stringify(d.perms || { role: 'admin', workspaces: ['*'] })) } catch (e) { }
           location.href = next
         })
         bindLangToggle(pg, initPage)
@@ -505,6 +601,75 @@ return {
       initPage()
       return
     }
+
+    // ---- guard 模式：成员工作区过滤（fetch 包装，先于应用安装）----
+    let PERMS = null
+    try { PERMS = JSON.parse(lg('perms') || 'null') } catch (e) { }
+    function memberAllowedWorkspace(w) {
+      if (!PERMS || PERMS.role !== 'member' || !Array.isArray(PERMS.workspaces)) return true
+      if (PERMS.workspaces.indexOf('*') >= 0) return true
+      const p = String(w.path || '').toLowerCase()
+      const ti = String(w.title || '').toLowerCase()
+      return PERMS.workspaces.some(function (m) {
+        const mm = String(m).toLowerCase()
+        return (p && p === mm) || (ti && ti === mm)
+      })
+    }
+    const __origFetch = window.fetch
+    // 成员被拒绝的 RPC：设置域全部、创建工作区、跨工作区搜索、创建目录
+    const DENY_METHODS = ['settings.', 'workspace.create', 'session.search', 'host.createDirectory']
+    function deniedResponse(bodyText) {
+      let rpcId = ''
+      try { rpcId = (JSON.parse(bodyText) || {}).rpcId || '' } catch (e) { }
+      return new Response(JSON.stringify({
+        type: 'server-response',
+        rpcId,
+        result: {
+          ok: false,
+          error: { code: 'bad-request', message: t('denied'), details: { issues: [] } }
+        }
+      }), { status: 200, statusText: 'OK', headers: { 'Content-Type': 'application/json' } })
+    }
+    window.fetch = function (input, init) {
+      const p = __origFetch.apply(this, arguments)
+      try {
+        if (!PERMS || PERMS.role !== 'member') return p
+        let methodName = ''
+        let bodyText = ''
+        try {
+          bodyText = String((init && init.body) || '')
+          const bj = JSON.parse(bodyText || '{}')
+          methodName = String((bj && bj.method) || '')
+        } catch (e) { }
+        if (methodName && DENY_METHODS.some(function (d) { return methodName === d || methodName.indexOf(d) === 0 })) {
+          return Promise.resolve(deniedResponse(bodyText))
+        }
+        const url = typeof input === 'string' ? input : (input && input.url) || ''
+        const mth = String((init && init.method) || (input && input.method) || 'GET').toUpperCase()
+        if (mth === 'POST' && url.indexOf('/api/workspace.list') >= 0 && typeof Response !== 'undefined') {
+          return p.then(function (resp) {
+            let clone
+            try { clone = resp.clone() } catch (e) { return resp }
+            return clone.json().then(function (j) {
+              try {
+                const items = j && j.result && j.result.value && j.result.value.items
+                if (Array.isArray(items)) {
+                  j.result.value.items = items.filter(memberAllowedWorkspace)
+                  return new Response(JSON.stringify(j), { status: resp.status, statusText: resp.statusText, headers: resp.headers })
+                }
+              } catch (e2) { }
+              return resp
+            }).catch(function () { return resp })
+          })
+        }
+      } catch (e) { }
+      return p
+    }
+    function applyRoleClass() {
+      if (PERMS && PERMS.role === 'member') document.documentElement.classList.add('wg-member')
+      else document.documentElement.classList.remove('wg-member')
+    }
+    applyRoleClass()
 
     // ---- guard 模式：不渲染遮罩；未认证直接跳转 /login，登录页负责发令牌 ----
     let watchTimer = null
@@ -540,11 +705,18 @@ return {
     }
     function verified(d) {
       if (d && d.expiresAt) sv('exp', d.expiresAt)
+      if (d && d.perms) {
+        PERMS = d.perms
+        try { sv('perms', JSON.stringify(d.perms)) } catch (e) { }
+      }
+      applyRoleClass()
       document.documentElement.style.visibility = ''
       startWatch(d.username, d.expiresAt || parseInt(lg('exp'), 10) || Date.now())
     }
     function goLogin() {
-      rmv('token'); rmv('exp')
+      rmv('token'); rmv('exp'); rmv('perms')
+      PERMS = null
+      applyRoleClass()
       try { document.cookie = 'webgate_token=; Path=/; Max-Age=0; SameSite=Lax' } catch (e) { }
       location.replace('/login')
     }
@@ -599,9 +771,10 @@ return {
       '#wg-gate .wg-langbar{display:flex;justify-content:flex-end;margin-top:6px}',
       '#wg-gate .wg-lang{font-size:11px;color:#679efe;cursor:pointer;opacity:.85;font-family:inherit}',
       '#wg-gate .wg-lang:hover{opacity:1;text-decoration:underline}',
-      '#wg-gate .wg-langbar{display:flex;justify-content:flex-end;margin-top:6px}',
-      '#wg-gate .wg-lang{font-size:11px;color:#679efe;cursor:pointer;opacity:.85;font-family:inherit}',
-      '#wg-gate .wg-lang:hover{opacity:1;text-decoration:underline}',
+      // member 角色下隐藏：设置入口 / 工作区搜索 / 列表头操作区（含添加工作区）
+      // 选择器用 CSS-modules 的"哈希_语义名"后缀匹配，跨构建稳定
+      'html.wg-member [class$="_settingsArea"],html.wg-member [class$="_searchButton"],html.wg-member [class$="_searchSlot"],html.wg-member [class$="_searchExpanded"]{display:none!important}',
+      'html.wg-member [class$="_sectionHeader"] [class$="_headerActions"]{display:none!important}',
       '#wg-gate .wg-wait{margin-top:18px;text-align:center;font-size:13px;color:rgba(158,170,196,.85)}',
       '#wg-gate .wg-spin{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.28);border-top-color:#fff;animation:wgRot .8s linear infinite;display:inline-block}',
       '#wg-gate .wg-spin-lg{width:34px;height:34px;border-width:3px}',
@@ -688,7 +861,7 @@ return {
           const tok = issueToken(u)
           console.log('[webgate] 用户登录成功: ' + u)
           // 同时种下 Cookie：为未来服务端网关级校验留好通道
-          sendJson(res, 200, { ok: true, token: tok, expiresAt: tokens[tok].exp, username: u }, {
+          sendJson(res, 200, { ok: true, token: tok, expiresAt: tokens[tok].exp, username: u, perms: permsFor(u) }, {
             'Set-Cookie': 'webgate_token=' + tok + '; Path=/; Max-Age=' + Math.floor(TOKEN_TTL_MS / 1000) + '; SameSite=Lax'
           })
         }
@@ -702,7 +875,7 @@ return {
           const b = await readJsonBody(req)
           const t = String(b.token || '')
           const e = tokens[t]
-          if (e && e.exp > Date.now()) return sendJson(res, 200, { ok: true, valid: true, username: e.user, expiresAt: e.exp })
+          if (e && e.exp > Date.now()) return sendJson(res, 200, { ok: true, valid: true, username: e.user, expiresAt: e.exp, perms: permsFor(e.user) })
           if (e) delete tokens[t]
           sendJson(res, 200, { ok: true, valid: false })
         }
@@ -730,26 +903,26 @@ return {
     ctx.effect(function () {
       return commandsSvc.register({
         name: 'useradd',
-        description: 'WebGate：添加 Web 登录用户 · Add a web login user',
-        input: { hint: '<用户名 username> <密码 password>' },
+        description: 'WebGate：添加 Web 登录用户（需管理员密码）· Add a web login user (admin password required)',
+        input: { hint: '<用户名 username> <密码 password> <管理员密码 admin-password>' },
         recordInput: false,
         handler: function (inv) {
           const parts = String(inv.rawInput || '').trim().split(/\s+/).filter(Boolean)
-          if (parts.length !== 2) return Promise.resolve(errRes('用法 Usage：/useradd <用户名 username> <密码 password>（密码至少 6 位 / password ≥ 6 chars）'))
-          return addUserCore(parts[0], parts[1]).then(function (r) { return r.ok ? okRes(r.message) : errRes(r.message) })
+          if (parts.length !== 3) return Promise.resolve(errRes('用法 Usage：/useradd <用户名 username> <密码 password> <管理员密码 admin-password>（密码至少 6 位 / password ≥ 6 chars）'))
+          return addUserCore(parts[0], parts[1], parts[2]).then(function (r) { return r.ok ? okRes(r.message) : errRes(r.message) })
         }
       })
     })
     ctx.effect(function () {
       return commandsSvc.register({
         name: 'passwd',
-        description: 'WebGate：修改用户登录密码 · Change a web login password',
-        input: { hint: '<用户名 username> <新密码 new-password>' },
+        description: 'WebGate：修改用户登录密码（需管理员密码）· Change a web login password (admin password required)',
+        input: { hint: '<用户名 username> <新密码 new-password> <管理员密码 admin-password>' },
         recordInput: false,
         handler: function (inv) {
           const parts = String(inv.rawInput || '').trim().split(/\s+/).filter(Boolean)
-          if (parts.length !== 2) return Promise.resolve(errRes('用法 Usage：/passwd <用户名 username> <新密码 new-password>（新密码至少 6 位 / ≥ 6 chars）'))
-          return passwdCore(parts[0], parts[1]).then(function (r) { return r.ok ? okRes(r.message) : errRes(r.message) })
+          if (parts.length !== 3) return Promise.resolve(errRes('用法 Usage：/passwd <用户名 username> <新密码 new-password> <管理员密码 admin-password>'))
+          return passwdCore(parts[0], parts[1], parts[2]).then(function (r) { return r.ok ? okRes(r.message) : errRes(r.message) })
         }
       })
     })
@@ -761,7 +934,8 @@ return {
           const users = listUsersCore()
           if (!users.length) return Promise.resolve(okRes('暂无用户 | No users yet'))
           const lines = users.map(function (u) {
-            return '- ' + u.username + ' · created 创建于 ' + (u.createdAt || '?') + ' · active sessions 活跃会话: ' + u.activeSessions
+            return '- ' + u.username + ' [' + u.role + '] · created 创建于 ' + (u.createdAt || '?') + ' · sessions 会话: ' + u.activeSessions
+              + (u.workspaces ? ' · workspaces 工作区: ' + u.workspaces : '')
           })
           return Promise.resolve(okRes('共 ' + users.length + ' 个用户 | ' + users.length + ' user(s):\n' + lines.join('\n')))
         }
@@ -769,13 +943,27 @@ return {
     })
     ctx.effect(function () {
       return commandsSvc.register({
-        name: 'userdel',
-        description: 'WebGate：删除 Web 登录用户 · Delete a web login user',
-        input: { hint: '<用户名 username>' },
+        name: 'grant',
+        description: 'WebGate：授予成员工作区可见性（需管理员密码）· Grant a workspace to a member (admin password required)',
+        input: { hint: '<用户名 username> <工作区路径|标题|*> <管理员密码 admin-password>' },
+        recordInput: false,
         handler: function (inv) {
           const parts = String(inv.rawInput || '').trim().split(/\s+/).filter(Boolean)
-          if (parts.length !== 1) return Promise.resolve(errRes('用法 Usage：/userdel <用户名 username>'))
-          return delUserCore(parts[0]).then(function (r) { return r.ok ? okRes(r.message) : errRes(r.message) })
+          if (parts.length !== 3) return Promise.resolve(errRes('用法 Usage：/grant <用户名 username> <工作区路径|标题|*> <管理员密码 admin-password>'))
+          return grantCore(parts[0], parts.slice(1, -1).join(' '), parts[2]).then(function (r) { return r.ok ? okRes(r.message) : errRes(r.message) })
+        }
+      })
+    })
+    ctx.effect(function () {
+      return commandsSvc.register({
+        name: 'revoke',
+        description: 'WebGate：撤销成员的工作区可见性（需管理员密码；* 或 all 清空）· Revoke a workspace (admin password required; * or all clears)',
+        input: { hint: '<用户名 username> <工作区路径|标题|*|all> <管理员密码 admin-password>' },
+        recordInput: false,
+        handler: function (inv) {
+          const parts = String(inv.rawInput || '').trim().split(/\s+/).filter(Boolean)
+          if (parts.length !== 3) return Promise.resolve(errRes('用法 Usage：/revoke <用户名 username> <工作区路径|标题|*|all> <管理员密码 admin-password>'))
+          return revokeCore(parts[0], parts.slice(1, -1).join(' '), parts[2]).then(function (r) { return r.ok ? okRes(r.message) : errRes(r.message) })
         }
       })
     })
@@ -813,14 +1001,18 @@ return {
   })
   regTool({
     name: 'webgate_user_add',
-    description: 'Add a WebGate web-login user. 添加一个 WebGate Web 登录用户。Username 用户名: 2-32 chars [A-Za-z0-9_.-]; password 密码: 6-128 chars.',
+    description: 'Add a WebGate web-login user (admin only). 添加一个 WebGate Web 登录用户（需要管理员密码）。Username 用户名: 2-32 chars [A-Za-z0-9_.-]; password 密码: 6-128 chars.',
     parameters: {
       type: 'object',
-      properties: { username: { type: 'string', description: '用户名 / username' }, password: { type: 'string', description: '密码 / password (min 6 chars)' } },
-      required: ['username', 'password']
+      properties: {
+        username: { type: 'string', description: '用户名 / username' },
+        password: { type: 'string', description: '密码 / password (min 6 chars)' },
+        adminPassword: { type: 'string', description: '任意管理员账号的密码 / an admin account password (authorization)' }
+      },
+      required: ['username', 'password', 'adminPassword']
     },
     execute: async function (args) {
-      return addUserCore(args.username, args.password)
+      return addUserCore(args.username, args.password, args.adminPassword)
     },
     output: {
       schema: { type: 'object', properties: { ok: { type: 'boolean' }, message: { type: 'string' } } },
@@ -829,14 +1021,58 @@ return {
   })
   regTool({
     name: 'webgate_user_passwd',
-    description: "Change a WebGate user's password; revokes their active sessions. 修改 WebGate 用户登录密码，并撤销其现有会话。",
+    description: "Change a WebGate user's password (admin only); revokes their active sessions. 修改用户登录密码（需要管理员密码），并撤销其现有会话。",
     parameters: {
       type: 'object',
-      properties: { username: { type: 'string', description: '用户名 / username' }, password: { type: 'string', description: '新密码 / new password (min 6 chars)' } },
-      required: ['username', 'password']
+      properties: {
+        username: { type: 'string', description: '用户名 / username' },
+        password: { type: 'string', description: '新密码 / new password (min 6 chars)' },
+        adminPassword: { type: 'string', description: '任意管理员账号的密码 / an admin account password (authorization)' }
+      },
+      required: ['username', 'password', 'adminPassword']
     },
     execute: async function (args) {
-      return passwdCore(args.username, args.password)
+      return passwdCore(args.username, args.password, args.adminPassword)
+    },
+    output: {
+      schema: { type: 'object', properties: { ok: { type: 'boolean' }, message: { type: 'string' } } },
+      render: function (args, value) { return [{ type: 'text', text: (value && value.message) || '' }] }
+    }
+  })
+  regTool({
+    name: 'webgate_workspace_grant',
+    description: 'Grant a member visibility of one workspace (full path or title; * = all). 授予成员一个工作区的可见性（完整路径或标题；* 表示全部）。Admin password required. 需要管理员密码。',
+    parameters: {
+      type: 'object',
+      properties: {
+        username: { type: 'string', description: '成员用户名 / member username' },
+        workspace: { type: 'string', description: '工作区完整路径或标题，* 为全部 / full path or title, * = all' },
+        adminPassword: { type: 'string', description: '管理员账号密码 / an admin account password (authorization)' }
+      },
+      required: ['username', 'workspace', 'adminPassword']
+    },
+    execute: async function (args) {
+      return grantCore(args.username, args.workspace, args.adminPassword)
+    },
+    output: {
+      schema: { type: 'object', properties: { ok: { type: 'boolean' }, message: { type: 'string' } } },
+      render: function (args, value) { return [{ type: 'text', text: (value && value.message) || '' }] }
+    }
+  })
+  regTool({
+    name: 'webgate_workspace_revoke',
+    description: 'Revoke a workspace from a member (* or all clears every grant). 撤销成员的一个工作区（* 或 all 清空全部授权）。Admin password required. 需要管理员密码。',
+    parameters: {
+      type: 'object',
+      properties: {
+        username: { type: 'string', description: '成员用户名 / member username' },
+        workspace: { type: 'string', description: '工作区完整路径、标题、* 或 all / full path, title, * or all' },
+        adminPassword: { type: 'string', description: '管理员账号密码 / an admin account password (authorization)' }
+      },
+      required: ['username', 'workspace', 'adminPassword']
+    },
+    execute: async function (args) {
+      return revokeCore(args.username, args.workspace, args.adminPassword)
     },
     output: {
       schema: { type: 'object', properties: { ok: { type: 'boolean' }, message: { type: 'string' } } },
@@ -851,6 +1087,8 @@ return {
       const salt = randomHex(16)
       usersCache = {}
       usersCache[INITIAL_USER] = {
+        role: 'admin',
+        workspaces: ['*'],
         hash: hashPassword(INITIAL_PASS, salt, PBKDF2_ITER),
         salt,
         iter: PBKDF2_ITER,
