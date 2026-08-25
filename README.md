@@ -178,35 +178,12 @@ dsh plugin --profile web remove @yyyq0325/dsh-webgate
 
 这是一个面向**本地个人工具**的入口门禁，不是企业级安全方案。当前为「守卫跳转」模式：守卫脚本运行在浏览器里，**理论上可以被 DevTools 禁用或删除**——绕过后页面外壳与 `/api` 数据通道仍然可达。原因与边界：
 
-1. DSH 的 `/api` 数据通道由 `@deepseek-ai/dsh-client-connection` 以命名前缀路由注册在 webServer 上：路由一经注册不可覆盖、最长前缀优先使其他路由无法遮蔽它，而 webServer 本身没有请求中间件缝隙。因此动态插件**无法在服务端对 `/api` 强制鉴权**，这是当前 Harness 扩展点的硬限制，不是本插件的选择。——但注意：这个限制只描述**插件进程内部**。按上文强烈建议部署 [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf) 反代后，会话校验发生在 nginx 层：未通过的请求根本到不了 webServer，`/api` 与页面外壳一样被服务端保护。**进程内的缝隙依然存在，但部署层已经把它堵死**——这正是反代方案的核心价值之一。
-2. 默认只监听 `127.0.0.1`；若改为 `0.0.0.0` 暴露到局域网，**务必**在前面加反向代理（Caddy/nginx Basic Auth 等）做真正的服务端鉴权。现成 nginx 配置模板见 [`deploy/nginx/`](deploy/nginx/)，两份模板默认**纯 HTTP、无域名无证书**即可使用（可信局域网内；出公网请按文末注释启用 HTTPS），**二选一**：
-   - **不想生成任何口令文件 → 直接用方案 B `auth-request.conf`**：拷进 conf.d 就完事，零额外凭据、零命令，登录用的就是 WebGate 账号（需本插件 ≥ 0.2.2）
-   - 偏好独立总闸 → 方案 A `basic-auth.conf`：需一次性生成口令文件（通常一个共享账号就够，Windows 下生成方法见模板注释）
+1. DSH 的 `/api` 数据通道由 `@deepseek-ai/dsh-client-connection` 以命名前缀路由注册在 webServer 上：路由一经注册不可覆盖、最长前缀优先使其他路由无法遮蔽它，而 webServer 本身没有请求中间件缝隙。因此动态插件**无法在服务端对 `/api` 强制鉴权**，这是当前 Harness 扩展点的硬限制，不是本插件的选择。
+2. 默认只监听 `127.0.0.1`；若要暴露到局域网或公网，请自行在前面加反向代理等手段做真正的服务端鉴权。
 3. 初始管理员密码是公开的默认值，部署后第一件事就是改密码。
-4. 登录令牌保存在浏览器 localStorage 与内存中；同时下发 `webgate_token` Cookie（SameSite=Lax）——配合 [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf) 反代方案，这个 Cookie 就是服务端强制鉴权的校验凭据（`auth_request` → `/auth/api/verify`）。
+4. 登录令牌保存在浏览器 localStorage 与内存中；同时下发 `webgate_token` Cookie（SameSite=Lax），为将来的网关级校验预留了通道。
 
-> 🔒 **强烈建议：任何离开本机的访问场景都套用 nginx 反代方案。**
-> 只要工作台会被内网穿透（cloudflared/frp 等）或部署到服务器上，守卫脚本就是唯一防线——它跑在浏览器里，可被 DevTools 禁用或删除；而反代方案把会话校验搬到服务端，绕过守卫也触达不了页面外壳与 `/api`。这不是"多一层保险"，而是安全性质从软变硬。仅 `127.0.0.1` 本机自用时不配 nginx，插件功能完整可用。
->
-> 🛡 **对「伪造 `Host` 头绕过信任围栏」类漏洞同样有效**：这类漏洞的利用链是攻击者与 dsh 端口直接对话，构造 `Host: 127.0.0.1` 冒充回环受信来源，进而调用高权限 RPC、以服务进程权限驱动 Agent 工具。反代架构把这条链从源头掐断——dsh 只绑回环且端口不对外放行，外界只能面对 nginx；未通过鉴权（口令 / WebGate 会话）的请求在到达 dsh 之前就被拦下，已放行的流量由 nginx 以**固定的 `Host: 127.0.0.1:3080`** 转发上游，客户端伪造什么头都无意义。
->
-> ⚠️ 生效前提：dsh 保持默认 `127.0.0.1:3080` 绑定，且防火墙/隧道**不得**把 3080 直接暴露出去——否则攻击者可绕过 nginx 直连上游。
-
-### 五步配置 nginx 反代
-
-前提：dsh 保持默认绑定（`127.0.0.1:3080`，别改 `0.0.0.0`）；有一个解析到这台机器的域名。
-
-1. **选模板**：推荐 [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf)（复用 WebGate 登录，无第二层弹窗）；想要一道独立的静态总闸就选 [`deploy/nginx/basic-auth.conf`](deploy/nginx/basic-auth.conf)。
-2. **改三处**：把模板里的 `server_name`、`ssl_certificate`、`ssl_certificate_key` 换成你的域名和证书路径。没有证书先签一个：`sudo certbot --nginx -d dsh.example.com`（免费）。
-3. **方案 A 专属**：生成口令文件 `sudo htpasswd -cB /etc/nginx/dsh.htpasswd alice`；方案 B 跳过这步。
-4. **安装启用**：
-   ```bash
-   sudo cp auth-request.conf /etc/nginx/conf.d/dsh.conf
-   sudo nginx -t && sudo systemctl reload nginx
-   ```
-5. **封后门**：防火墙/安全组只放行 80 和 443，**绝不放行 3080**；用 cloudflared 的话，把隧道 ingress 改指 `https://localhost:443`（配 `noTLSVerify: true`）。
-
-验证是否生效：`curl -I https://你的域名/` —— 方案 A 应返回 `401`，方案 B 应返回 `302` 跳向 `/login`。之后浏览器打开就是正常的 WebGate 登录页。
+> 🤝 **欢迎 PR**：上面第 1 条的服务端鉴权缺口，靠浏览器守卫是补不上的——它需要 Harness 上游提供请求中间件 / 网关鉴权点，或者社区一起设计更优的进程内方案。如果你有思路（无论是对本插件的改进，还是对上游的建议），欢迎提 Issue / PR！
 
 ## 开发与测试
 

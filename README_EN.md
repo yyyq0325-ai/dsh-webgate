@@ -152,35 +152,12 @@ All routes, listeners, commands, and tool registrations hang off the plugin fibe
 
 This is an entry gate for a **local personal tool**, not enterprise security. The current "guard redirect" mode runs in the browser and **can be defeated with DevTools** (disable/delete the guard script) — after bypassing, the shell and the `/api` data channel remain reachable. Why:
 
-1. DSH's `/api` data channel is registered on webServer as a named prefix route by `@deepseek-ai/dsh-client-connection`. Routes cannot be overridden once registered, longer-prefix routing prevents shadowing it, and webServer has no request-middleware seam — so a dynamic plugin **cannot enforce server-side auth on `/api`**. This is a hard limit of current Harness extension points, not a design choice here. — Note that this limit only describes the **inside of the plugin process**. With the strongly recommended [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf) reverse proxy deployed, session validation happens at the nginx layer: requests that fail it never reach webServer, so `/api` is server-side protected just like the app shell. **The in-process seam still exists, but the deployment layer seals it** — that is one of the core values of the reverse-proxy setup.
-2. The server binds `127.0.0.1` by default. If you rebind to `0.0.0.0`, put an authenticating reverse proxy (Caddy/nginx Basic Auth) in front — that is the real enforcement point. Ready-made nginx templates live in [`deploy/nginx/`](deploy/nginx/), both working on **plain HTTP with no domain and no certificate** (trusted LANs; enable the commented HTTPS block when going public). Pick **one**:
-   - **Don't want to generate any password file → just use option B `auth-request.conf`**: drop it into conf.d and done — zero extra credentials, zero commands; sign-in uses your WebGate account (requires plugin ≥ 0.2.2)
-   - Prefer a standalone gate → option A `basic-auth.conf`: needs a one-time htpasswd file (usually one shared account is enough, Windows commands in the template comments)
+1. DSH's `/api` data channel is registered on webServer as a named prefix route by `@deepseek-ai/dsh-client-connection`. Routes cannot be overridden once registered, longer-prefix routing prevents shadowing it, and webServer has no request-middleware seam — so a dynamic plugin **cannot enforce server-side auth on `/api`**. This is a hard limit of current Harness extension points, not a design choice here.
+2. The server binds `127.0.0.1` by default. If you expose it to a LAN or the public internet, put your own authenticating reverse proxy (or similar) in front for real server-side enforcement.
 3. The initial admin password is public — change it first thing.
-4. Tokens live in browser localStorage and host memory only; a host restart requires re-login. A `webgate_token` Cookie (SameSite=Lax) is also issued at login — paired with the [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf) template, that cookie becomes the credential for server-side enforcement (`auth_request` → `/auth/api/verify`).
+4. Tokens live in browser localStorage and host memory only; a host restart requires re-login. A `webgate_token` Cookie (SameSite=Lax) is also issued at login, reserving a channel for future gateway-level validation.
 
-> 🔒 **Strongly recommended: put the nginx template in front whenever access leaves this machine.**
-> As soon as the workbench is tunneled out (cloudflared/frp etc.) or deployed to a server, the guard script is the only line of defense — it runs in the browser and can be disabled via DevTools. The reverse-proxy template moves session validation server-side: bypassing the guard no longer reaches the app shell or `/api`. This is not "one extra layer", it is soft-vs-hard enforcement. On plain `127.0.0.1` local use the plugin is fully functional without nginx.
->
-> 🛡 **Also covers the "forged Host header bypasses the trust fence" vulnerability class**: that attack chain requires talking to the dsh port directly — spoofing `Host: 127.0.0.1` to impersonate a trusted loopback origin, then driving high-privilege RPC and Agent tools with service-process privileges. The reverse-proxy architecture cuts the chain at its source: dsh binds loopback only with the port never exposed, so outsiders face nginx alone; requests failing authentication (password / WebGate session) are dropped before reaching dsh, and everything that passes is forwarded upstream by nginx with a **fixed `Host: 127.0.0.1:3080`** — whatever Host the client forges is meaningless there.
->
-> ⚠️ Preconditions: keep dsh on its default `127.0.0.1:3080` binding and never expose 3080 through the firewall/tunnel — otherwise attackers bypass nginx and hit the upstream directly.
-
-### Five-step nginx setup
-
-Prerequisites: dsh keeps its default binding (`127.0.0.1:3080`, never `0.0.0.0`); a domain resolving to this machine/server.
-
-1. **Pick a template**: [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf) reuses your WebGate login (recommended, no second prompt); [`deploy/nginx/basic-auth.conf`](deploy/nginx/basic-auth.conf) adds an independent static gate.
-2. **Edit three lines**: replace `server_name`, `ssl_certificate`, `ssl_certificate_key` with your domain and certificate paths. No certificate yet? `sudo certbot --nginx -d dsh.example.com` (free).
-3. **Option A only**: create the password file `sudo htpasswd -cB /etc/nginx/dsh.htpasswd alice`; option B skips this step.
-4. **Install & enable**:
-   ```bash
-   sudo cp auth-request.conf /etc/nginx/conf.d/dsh.conf
-   sudo nginx -t && sudo systemctl reload nginx
-   ```
-5. **Close the back door**: firewall/security group allows only 80 and 443 — **never 3080**; for cloudflared tunnels point ingress at `https://localhost:443` (with `noTLSVerify: true`).
-
-Verify it is live: `curl -I https://your.domain/` — option A answers `401`, option B answers `302` to `/login`. Opening it in a browser then shows the normal WebGate login flow.
+> 🤝 **PRs welcome**: the server-side enforcement gap in point 1 cannot be closed by a browser-side guard alone — it needs either an upstream request-middleware/gateway hook in Harness or a better in-process design from the community. If you have ideas (improvements to this plugin or suggestions upstream), issues and pull requests are welcome!
 
 ## Development
 
