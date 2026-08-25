@@ -159,6 +159,10 @@ This is an entry gate for a **local personal tool**, not enterprise security. Th
 
 > 🔒 **Strongly recommended: put the nginx template in front whenever access leaves this machine.**
 > As soon as the workbench is tunneled out (cloudflared/frp etc.) or deployed to a server, the guard script is the only line of defense — it runs in the browser and can be disabled via DevTools. The reverse-proxy template moves session validation server-side: bypassing the guard no longer reaches the app shell or `/api`. This is not "one extra layer", it is soft-vs-hard enforcement. On plain `127.0.0.1` local use the plugin is fully functional without nginx.
+>
+> 🛡 **Also covers the "forged Host header bypasses the trust fence" vulnerability class**: that attack chain requires talking to the dsh port directly — spoofing `Host: 127.0.0.1` to impersonate a trusted loopback origin, then driving high-privilege RPC and Agent tools with service-process privileges. The reverse-proxy architecture cuts the chain at its source: dsh binds loopback only with the port never exposed, so outsiders face nginx alone; requests failing authentication (password / WebGate session) are dropped before reaching dsh, and everything that passes is forwarded upstream by nginx with a **fixed `Host: 127.0.0.1:3080`** — whatever Host the client forges is meaningless there.
+>
+> ⚠️ Preconditions: keep dsh on its default `127.0.0.1:3080` binding and never expose 3080 through the firewall/tunnel — otherwise attackers bypass nginx and hit the upstream directly.
 
 ## Development
 
