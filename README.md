@@ -190,6 +190,22 @@ dsh plugin --profile web remove @yyyq0325/dsh-webgate
 >
 > ⚠️ 生效前提：dsh 保持默认 `127.0.0.1:3080` 绑定，且防火墙/隧道**不得**把 3080 直接暴露出去——否则攻击者可绕过 nginx 直连上游。
 
+### 五步配置 nginx 反代
+
+前提：dsh 保持默认绑定（`127.0.0.1:3080`，别改 `0.0.0.0`）；有一个解析到这台机器的域名。
+
+1. **选模板**：推荐 [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf)（复用 WebGate 登录，无第二层弹窗）；想要一道独立的静态总闸就选 [`deploy/nginx/basic-auth.conf`](deploy/nginx/basic-auth.conf)。
+2. **改三处**：把模板里的 `server_name`、`ssl_certificate`、`ssl_certificate_key` 换成你的域名和证书路径。没有证书先签一个：`sudo certbot --nginx -d dsh.example.com`（免费）。
+3. **方案 A 专属**：生成口令文件 `sudo htpasswd -cB /etc/nginx/dsh.htpasswd alice`；方案 B 跳过这步。
+4. **安装启用**：
+   ```bash
+   sudo cp auth-request.conf /etc/nginx/conf.d/dsh.conf
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+5. **封后门**：防火墙/安全组只放行 80 和 443，**绝不放行 3080**；用 cloudflared 的话，把隧道 ingress 改指 `https://localhost:443`（配 `noTLSVerify: true`）。
+
+验证是否生效：`curl -I https://你的域名/` —— 方案 A 应返回 `401`，方案 B 应返回 `302` 跳向 `/login`。之后浏览器打开就是正常的 WebGate 登录页。
+
 ## 开发与测试
 
 ```bash

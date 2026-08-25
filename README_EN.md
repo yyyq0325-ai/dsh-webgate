@@ -164,6 +164,22 @@ This is an entry gate for a **local personal tool**, not enterprise security. Th
 >
 > ⚠️ Preconditions: keep dsh on its default `127.0.0.1:3080` binding and never expose 3080 through the firewall/tunnel — otherwise attackers bypass nginx and hit the upstream directly.
 
+### Five-step nginx setup
+
+Prerequisites: dsh keeps its default binding (`127.0.0.1:3080`, never `0.0.0.0`); a domain resolving to this machine/server.
+
+1. **Pick a template**: [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf) reuses your WebGate login (recommended, no second prompt); [`deploy/nginx/basic-auth.conf`](deploy/nginx/basic-auth.conf) adds an independent static gate.
+2. **Edit three lines**: replace `server_name`, `ssl_certificate`, `ssl_certificate_key` with your domain and certificate paths. No certificate yet? `sudo certbot --nginx -d dsh.example.com` (free).
+3. **Option A only**: create the password file `sudo htpasswd -cB /etc/nginx/dsh.htpasswd alice`; option B skips this step.
+4. **Install & enable**:
+   ```bash
+   sudo cp auth-request.conf /etc/nginx/conf.d/dsh.conf
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+5. **Close the back door**: firewall/security group allows only 80 and 443 — **never 3080**; for cloudflared tunnels point ingress at `https://localhost:443` (with `noTLSVerify: true`).
+
+Verify it is live: `curl -I https://your.domain/` — option A answers `401`, option B answers `302` to `/login`. Opening it in a browser then shows the normal WebGate login flow.
+
 ## Development
 
 ```bash
