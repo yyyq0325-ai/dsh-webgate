@@ -603,6 +603,21 @@ export function apply(ctx) {
     // ---- guard 模式：成员工作区过滤（fetch 包装，先于应用安装）----
     let PERMS = null
     try { PERMS = JSON.parse(lg('perms') || 'null') } catch (e) { }
+    let allowedIds = new Set()        // 已放行工作区的 workspaceId（来自过滤后的 workspace.list）
+    let allowedSessionIds = new Set() // 已放行工作区名下的 sessionId（来自 workspaceView.sessionIds）
+    let seenWorkspaceList = false
+    function resetAllowCache() {
+      allowedIds = new Set()
+      allowedSessionIds = new Set()
+      seenWorkspaceList = false
+    }
+    function noteAllowedWorkspace(w) {
+      try {
+        if (w && w.workspaceId) allowedIds.add(String(w.workspaceId))
+        const sids = (w && w.sessionIds) || []
+        for (const s of sids) allowedSessionIds.add(String(s))
+      } catch (e) { }
+    }
     function memberAllowedWorkspace(w) {
       if (!PERMS || PERMS.role !== 'member' || !Array.isArray(PERMS.workspaces)) return true
       if (PERMS.workspaces.indexOf('*') >= 0) return true
@@ -613,6 +628,10 @@ export function apply(ctx) {
         // 匹配规则：完整路径相等 / 标题相等 / 路径以「分隔符+匹配器」结尾（按目录名授予）
         return p === mm || ti === mm || p.endsWith('\\' + mm) || p.endsWith('/' + mm)
       })
+    }
+    function cwdAllowed(cwd) {
+      if (!cwd) return false
+      return memberAllowedWorkspace({ path: String(cwd) })
     }
     function requestUrlOf(input) {
       try {
@@ -634,8 +653,10 @@ export function apply(ctx) {
       return s
     }
     const __origFetch = window.fetch
-    // 成员被拒绝的 RPC：设置域全部、创建工作区、跨工作区搜索、创建目录
-    const DENY_METHODS = ['settings.', 'workspace.create', 'session.search', 'host.createDirectory']
+    // 成员无条件拒绝的 RPC：设置域全部、创建工作区、跨工作区搜索、创建目录
+    const DENY_METHODS = ['settings.', 'session.search', 'workspace.create', 'host.createDirectory']
+    // 携带 workspaceId 的工作区变更：仅当目标在授权清单内才放行
+    const ID_GUARD_METHODS = ['workspace.rename', 'workspace.delete', 'workspace.insertBefore', 'workspace.insertSessionBefore', 'session.create']
     function deniedResponse(bodyText) {
       let rpcId = ''
       try { rpcId = (JSON.parse(bodyText) || {}).rpcId || '' } catch (e) { }
@@ -654,25 +675,60 @@ export function apply(ctx) {
         if (!PERMS || PERMS.role !== 'member') return p
         let methodName = ''
         let bodyText = ''
+        let payload = {}
         try {
           bodyText = String((init && init.body) || '')
           const bj = JSON.parse(bodyText || '{}')
           methodName = String((bj && bj.method) || '')
+          payload = (bj && bj.payload && typeof bj.payload === 'object') ? bj.payload : {}
         } catch (e) { }
         if (methodName && DENY_METHODS.some(function (d) { return methodName === d || methodName.indexOf(d) === 0 })) {
           return Promise.resolve(deniedResponse(bodyText))
         }
+        if (methodName && ID_GUARD_METHODS.indexOf(methodName) >= 0) {
+          const wid = String((payload && payload.workspaceId) || '')
+          if (!wid || !allowedIds.has(wid)) return Promise.resolve(deniedResponse(bodyText))
+        }
         const rawUrl = requestUrlOf(input)
         const mth = String((init && init.method) || (input && input.method) || 'GET').toUpperCase()
-        if (mth === 'POST' && pathnameOf(rawUrl).indexOf('/api/workspace.list') === 0 && typeof Response !== 'undefined') {
+        const pathn = pathnameOf(rawUrl)
+        if (mth === 'POST' && pathn.indexOf('/api/workspace.list') === 0 && typeof Response !== 'undefined') {
+          seenWorkspaceList = true
           return p.then(function (resp) {
             let clone
             try { clone = resp.clone() } catch (e) { return resp }
             return clone.json().then(function (j) {
               try {
-                const items = j && j.result && j.result.value && j.result.value.items
+                const value = j && j.result && j.result.value
+                const items = value && value.items
                 if (Array.isArray(items)) {
-                  j.result.value.items = items.filter(memberAllowedWorkspace)
+                  const kept = items.filter(memberAllowedWorkspace)
+                  value.items = kept
+                  kept.forEach(noteAllowedWorkspace)
+                  return new Response(JSON.stringify(j), { status: resp.status, statusText: resp.statusText, headers: resp.headers })
+                }
+              } catch (e2) { }
+              return resp
+            }).catch(function () { return resp })
+          })
+        }
+        if (mth === 'POST' && pathn.indexOf('/api/session.list') === 0 && typeof Response !== 'undefined') {
+          return p.then(function (resp) {
+            let clone
+            try { clone = resp.clone() } catch (e) { return resp }
+            return clone.json().then(function (j) {
+              try {
+                const value = j && j.result && j.result.value
+                const items = value && value.items
+                if (Array.isArray(items)) {
+                  // 会话条目没有 workspaceId，用 cwd 匹配授权路径；blank 为当前占位行保留；
+                  // 已知授权工作区的 sessionIds 直接放行
+                  value.items = items.filter(function (it) {
+                    if (!it) return false
+                    if (it.blank) return true
+                    if (allowedSessionIds.has(String(it.sessionId))) return true
+                    return cwdAllowed(it.cwd)
+                  })
                   return new Response(JSON.stringify(j), { status: resp.status, statusText: resp.statusText, headers: resp.headers })
                 }
               } catch (e2) { }
@@ -706,7 +762,10 @@ export function apply(ctx) {
     function doLogout(local) {
       stopWatch(); hideChip()
       const tok = lg('token')
-      rmv('token'); rmv('exp')
+      rmv('token'); rmv('exp'); rmv('perms')
+      PERMS = null
+      resetAllowCache()
+      applyRoleClass()
       try { document.cookie = 'webgate_token=; Path=/; Max-Age=0; SameSite=Lax' } catch (e) { }
       if (!local && tok) {
         fetch('/auth/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: tok }) })
@@ -725,6 +784,7 @@ export function apply(ctx) {
       if (d && d.expiresAt) sv('exp', d.expiresAt)
       if (d && d.perms) {
         PERMS = d.perms
+        resetAllowCache()
         try { sv('perms', JSON.stringify(d.perms)) } catch (e) { }
       }
       applyRoleClass()
@@ -734,6 +794,7 @@ export function apply(ctx) {
     function goLogin() {
       rmv('token'); rmv('exp'); rmv('perms')
       PERMS = null
+      resetAllowCache()
       applyRoleClass()
       try { document.cookie = 'webgate_token=; Path=/; Max-Age=0; SameSite=Lax' } catch (e) { }
       location.replace('/login')

@@ -155,14 +155,28 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
 
   // ---- J: 成员工作区过滤（fetch 包装；模拟真实调用：URL 对象 + 按目录名授予）----
   const wsItems = [
-    { workspaceId: 'w1', path: 'D:\\code\\park', title: 'park', sessionIds: [], createdAt: '', updatedAt: '' },
-    { workspaceId: 'w2', path: 'D:\\code\\other', title: 'other', sessionIds: [], createdAt: '', updatedAt: '' },
+    { workspaceId: 'w1', path: 'D:\\code\\park', title: 'park', sessionIds: ['s-own'], createdAt: '', updatedAt: '' },
+    { workspaceId: 'w2', path: 'D:\\code\\other', title: 'other', sessionIds: ['s-other'], createdAt: '', updatedAt: '' },
   ]
   const listEnvelope = () => ({ type: 'server-response', rpcId: 'x', result: { ok: true, value: { items: JSON.parse(JSON.stringify(wsItems)), archivedSessionIds: [] } } })
+  const sessionListEnvelope = () => ({
+    type: 'server-response', rpcId: 'sl',
+    result: {
+      ok: true,
+      value: {
+        items: [
+          { sessionId: 's-own', updatedAt: 1, running: false, blank: false, cwd: 'D:\\code\\park' },
+          { sessionId: 's-other', updatedAt: 2, running: false, blank: false, cwd: 'D:\\code\\other' },
+          { sessionId: 's-blankx', updatedAt: 3, running: false, blank: true },
+        ],
+      },
+    },
+  })
   const memberResponder = (u0, opts) => {
     const url = String(u0)
     const b = JSON.parse(opts.body)
     if (url.endsWith('/api/workspace.list')) return listEnvelope()
+    if (url.endsWith('/api/session.list')) return sessionListEnvelope()
     if (url.endsWith('/session') && b.token === 'TK-m') return { ok: true, valid: true, username: 'alice', expiresAt: Date.now() + 3600000, perms: { role: 'member', workspaces: ['park'] } }
     return { ok: false }
   }
@@ -186,6 +200,13 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
   const listResp2 = await env.window.fetch('/api/workspace.list', { method: 'POST', body: '{}' })
   expect('J3 复核后仍过滤', (await listResp2.json()).result.value.items.length === 1)
 
+  // 会话标题过滤：session.list 只保留授权工作区名下 / cwd 匹配 / blank 占位
+  const slResp = await env.window.fetch('/api/session.list', { method: 'POST', body: '{}' })
+  const slj = await slResp.json()
+  const slIds = slj.result.value.items.map(x => x.sessionId).sort()
+  expect('J8 session.list 过滤他人标题（保留 own+blank）',
+    JSON.stringify(slIds) === JSON.stringify(['s-blankx', 's-own']))
+
   // 成员：html 标记与受限 RPC 拒绝
   expect('J4 html 获得 wg-member 类', env.documentElement.className.includes('wg-member'))
   const deny = async (method) => {
@@ -201,6 +222,19 @@ const gateRoot = env => env.documentElement.children.find(c => c.id === 'wg-gate
   expect('J6 workspace.create 被拒', d2.result.ok === false)
   const d3 = await deny('session.search')
   expect('J7 session.search 被拒', d3.result.ok === false)
+
+  // 携带 workspaceId 的变更：目标未授权 → 拒绝；已授权 → 放行
+  const idCall = async (method, wid) => {
+    const r = await env.window.fetch('/api/' + method, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'client-request', rpcId: 'r-' + method + wid, method, payload: { workspaceId: wid } })
+    })
+    return r.json()
+  }
+  const dg = await idCall('workspace.rename', 'w2')
+  expect('J8a 未授权工作区变更被拒', dg.result.ok === false && dg.result.error.code === 'bad-request')
+  const dp = await idCall('workspace.rename', 'w1')
+  expect('J8b 授权工作区变更放行', !(dp.result && dp.result.error && dp.result.error.code === 'bad-request'))
 
   // ---- K: admin 不受过滤 ----
   env = buildEnv({
