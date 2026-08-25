@@ -178,7 +178,7 @@ dsh plugin --profile web remove @yyyq0325/dsh-webgate
 
 这是一个面向**本地个人工具**的入口门禁，不是企业级安全方案。当前为「守卫跳转」模式：守卫脚本运行在浏览器里，**理论上可以被 DevTools 禁用或删除**——绕过后页面外壳与 `/api` 数据通道仍然可达。原因与边界：
 
-1. DSH 的 `/api` 数据通道由 `@deepseek-ai/dsh-client-connection` 以命名前缀路由注册在 webServer 上：路由一经注册不可覆盖、最长前缀优先使其他路由无法遮蔽它，而 webServer 本身没有请求中间件缝隙。因此动态插件**无法在服务端对 `/api` 强制鉴权**，这是当前 Harness 扩展点的硬限制，不是本插件的选择。
+1. DSH 的 `/api` 数据通道由 `@deepseek-ai/dsh-client-connection` 以命名前缀路由注册在 webServer 上：路由一经注册不可覆盖、最长前缀优先使其他路由无法遮蔽它，而 webServer 本身没有请求中间件缝隙。因此动态插件**无法在服务端对 `/api` 强制鉴权**，这是当前 Harness 扩展点的硬限制，不是本插件的选择。——但注意：这个限制只描述**插件进程内部**。按上文强烈建议部署 [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf) 反代后，会话校验发生在 nginx 层：未通过的请求根本到不了 webServer，`/api` 与页面外壳一样被服务端保护。**进程内的缝隙依然存在，但部署层已经把它堵死**——这正是反代方案的核心价值之一。
 2. 默认只监听 `127.0.0.1`；若改为 `0.0.0.0` 暴露到局域网，**务必**在前面加反向代理（Caddy/nginx Basic Auth 等）做真正的服务端鉴权。现成 nginx 配置模板见 [`deploy/nginx/`](deploy/nginx/)，两份模板默认**纯 HTTP、无域名无证书**即可使用（可信局域网内；出公网请按文末注释启用 HTTPS），**二选一**：
    - **不想生成任何口令文件 → 直接用方案 B `auth-request.conf`**：拷进 conf.d 就完事，零额外凭据、零命令，登录用的就是 WebGate 账号（需本插件 ≥ 0.2.2）
    - 偏好独立总闸 → 方案 A `basic-auth.conf`：需一次性生成口令文件（通常一个共享账号就够，Windows 下生成方法见模板注释）
