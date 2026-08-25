@@ -155,7 +155,10 @@ This is an entry gate for a **local personal tool**, not enterprise security. Th
 1. DSH's `/api` data channel is registered on webServer as a named prefix route by `@deepseek-ai/dsh-client-connection`. Routes cannot be overridden once registered, longer-prefix routing prevents shadowing it, and webServer has no request-middleware seam — so a dynamic plugin **cannot enforce server-side auth on `/api`**. This is a hard limit of current Harness extension points, not a design choice here.
 2. The server binds `127.0.0.1` by default. If you rebind to `0.0.0.0`, put an authenticating reverse proxy (Caddy/nginx Basic Auth) in front — that is the real enforcement point. Ready-made nginx templates live in [`deploy/nginx/`](deploy/nginx/): option A `basic-auth.conf` (site-wide Basic Auth gate), option B `auth-request.conf` (`auth_request` wired to WebGate sessions, requires plugin ≥ 0.2.2).
 3. The initial admin password is public — change it first thing.
-4. Tokens live in browser localStorage and host memory only; a host restart requires re-login. A `webgate_token` Cookie (SameSite=Lax) is also issued, ready for gateway-level checks if upstream adds such a seam.
+4. Tokens live in browser localStorage and host memory only; a host restart requires re-login. A `webgate_token` Cookie (SameSite=Lax) is also issued at login — paired with the [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf) template, that cookie becomes the credential for server-side enforcement (`auth_request` → `/auth/api/verify`).
+
+> 🔒 **Strongly recommended: put the nginx template in front whenever access leaves this machine.**
+> As soon as the workbench is tunneled out (cloudflared/frp etc.) or deployed to a server, the guard script is the only line of defense — it runs in the browser and can be disabled via DevTools. The reverse-proxy template moves session validation server-side: bypassing the guard no longer reaches the app shell or `/api`. This is not "one extra layer", it is soft-vs-hard enforcement. On plain `127.0.0.1` local use the plugin is fully functional without nginx.
 
 ## Development
 

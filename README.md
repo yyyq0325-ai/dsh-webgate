@@ -181,7 +181,10 @@ dsh plugin --profile web remove @yyyq0325/dsh-webgate
 1. DSH 的 `/api` 数据通道由 `@deepseek-ai/dsh-client-connection` 以命名前缀路由注册在 webServer 上：路由一经注册不可覆盖、最长前缀优先使其他路由无法遮蔽它，而 webServer 本身没有请求中间件缝隙。因此动态插件**无法在服务端对 `/api` 强制鉴权**，这是当前 Harness 扩展点的硬限制，不是本插件的选择。
 2. 默认只监听 `127.0.0.1`；若改为 `0.0.0.0` 暴露到局域网，**务必**在前面加反向代理（Caddy/nginx Basic Auth 等）做真正的服务端鉴权。现成 nginx 配置模板见 [`deploy/nginx/`](deploy/nginx/)：方案 A `basic-auth.conf`（Basic Auth 总闸）、方案 B `auth-request.conf`（auth_request 对接 WebGate 会话，需本插件 ≥ 0.2.2）。
 3. 初始管理员密码是公开的默认值，部署后第一件事就是改密码。
-4. 登录令牌保存在浏览器 localStorage 与内存中；同时下发 `webgate_token` Cookie（SameSite=Lax），一旦上游提供网关级校验点即可无缝切换为强制模式。
+4. 登录令牌保存在浏览器 localStorage 与内存中；同时下发 `webgate_token` Cookie（SameSite=Lax）——配合 [`deploy/nginx/auth-request.conf`](deploy/nginx/auth-request.conf) 反代方案，这个 Cookie 就是服务端强制鉴权的校验凭据（`auth_request` → `/auth/api/verify`）。
+
+> 🔒 **强烈建议：任何离开本机的访问场景都套用 nginx 反代方案。**
+> 只要工作台会被内网穿透（cloudflared/frp 等）或部署到服务器上，守卫脚本就是唯一防线——它跑在浏览器里，可被 DevTools 禁用或删除；而反代方案把会话校验搬到服务端，绕过守卫也触达不了页面外壳与 `/api`。这不是"多一层保险"，而是安全性质从软变硬。仅 `127.0.0.1` 本机自用时不配 nginx，插件功能完整可用。
 
 ## 开发与测试
 
