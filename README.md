@@ -182,6 +182,11 @@ dsh plugin --profile web remove @yyyq0325/dsh-webgate
 2. 默认只监听 `127.0.0.1`；若要暴露到局域网或公网，请自行在前面加反向代理等手段做真正的服务端鉴权。
 3. 初始管理员密码是公开的默认值，部署后第一件事就是改密码。
 4. 登录令牌保存在浏览器 localStorage 与内存中；同时下发 `webgate_token` Cookie（SameSite=Lax），为将来的网关级校验预留了通道。
+5. **关于 Harness 0.1.5-alpha 的成员工作区过滤，请务必了解它的边界**：
+   - alpha5 把工作区列表改成了 WebSocket 订阅流（`/api/remote.mux`）。守卫相应地包装了 WebSocket 并在浏览器端改写帧数据，使 member 的界面上只出现被授权的工作区；
+   - **但未授权工作区的完整数据仍然会到达浏览器**——过滤发生在 UI 层，懂 DevTools 的用户可以直读原始 WebSocket 帧看到全部内容。这与旧版 fetch 过滤是同一性质，定位始终是「防误触」而非对抗有意绕过；
+   - 对 workspace 流的识别基于 open 帧 endpoint 含 `workspace` 的启发式匹配；未来上游若新增其他含该字样的流式端点也会被同样过滤；
+   - 真正的 per-user 服务端过滤需要 Harness 上游提供网关鉴权点或请求中间件（本仓库 `docs/upstream-webserver-request-waterfall.md` 已草拟提案），欢迎有能力的朋友一起推动或提 PR。
 
 > 🤝 **欢迎 PR**：上面第 1 条的服务端鉴权缺口，靠浏览器守卫是补不上的——它需要 Harness 上游提供请求中间件 / 网关鉴权点，或者社区一起设计更优的进程内方案。如果你有思路（无论是对本插件的改进，还是对上游的建议），欢迎提 Issue / PR！
 

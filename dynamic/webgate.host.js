@@ -684,16 +684,21 @@ return {
           methodName = String((bj && bj.method) || '')
           payload = (bj && bj.payload && typeof bj.payload === 'object') ? bj.payload : {}
         } catch (e) { }
-        if (methodName && DENY_METHODS.some(function (d) { return methodName === d || methodName.indexOf(d) === 0 })) {
+        // alpha5 的 Remote endpoint 用「命名空间/方法」斜杠格式（如 workspace/create），
+        // 旧版用点号（workspace.create）；归一化成点号再匹配，两版通吃
+        const normMethod = methodName.replace(/\//g, '.')
+        if (normMethod && DENY_METHODS.some(function (d) { return normMethod === d || normMethod.indexOf(d) === 0 })) {
           return Promise.resolve(deniedResponse(bodyText))
         }
-        if (methodName && ID_GUARD_METHODS.indexOf(methodName) >= 0) {
+        if (normMethod && ID_GUARD_METHODS.indexOf(normMethod) >= 0) {
           const wid = String((payload && payload.workspaceId) || '')
           if (!wid || !allowedIds.has(wid)) return Promise.resolve(deniedResponse(bodyText))
         }
         const rawUrl = requestUrlOf(input)
         const mth = String((init && init.method) || (input && input.method) || 'GET').toUpperCase()
-        const pathn = pathnameOf(rawUrl)
+        // alpha5 的 RPC URL 用「/api/命名空间/方法」斜杠格式（如 /api/session/list），
+        // 旧版是点号（/api/session.list）；归一化成点号，两版通吃
+        const pathn = pathnameOf(rawUrl).replace(/^\/api\/([^/]+)\/(.*)$/, '/api/$1.$2')
         if (mth === 'POST' && pathn.indexOf('/api/workspace.list') === 0 && typeof Response !== 'undefined') {
           seenWorkspaceList = true
           return p.then(function (resp) {
@@ -740,6 +745,98 @@ return {
         }
       } catch (e) { }
       return p
+    }
+
+    // ---- alpha5 兼容：工作区列表从一次性 POST /api/workspace.list 改成了
+    //      WebSocket /api/remote.mux 上的订阅式投影流，fetch 拦不到；这里再包
+    //      一层 WebSocket，按 streamId 嗅探并过滤 workspace 流的下行帧 ----
+    const NativeWebSocket = window.WebSocket
+    if (typeof NativeWebSocket === 'function') {
+      const MUX_PATH = '/api/remote.mux'
+      const __origWsSend = NativeWebSocket.prototype.send
+      const wsFilterActive = function () { return !!(PERMS && PERMS.role === 'member') }
+      const muxOf = function (u) {
+        try {
+          let s = String(typeof u === 'string' ? u : (u && u.href) || '')
+          const q = s.indexOf('?'); if (q >= 0) s = s.slice(0, q)
+          return s.indexOf(MUX_PATH) >= 0
+        } catch (e) { return false }
+      }
+      const workspaceEndpoint = function (ep) { return /workspace/i.test(String(ep || '')) }
+      // 返回值：null=原样透传；'drop'=整帧丢弃；字符串=替换后的 data。
+      // 关键：只改 value 内部，保持帧顶层键集不变（客户端 exactKeys 校验，键一变即 close(4002) 断链）
+      const rewriteFrame = function (str, streams) {
+        let frame
+        try { frame = JSON.parse(str) } catch (e) { return null }
+        if (!frame || frame.type !== 'item') return null
+        if (!streams.has(String(frame.streamId))) return null
+        const v = frame.value
+        if (!v || typeof v !== 'object') return null
+        try {
+          if (v.type === 'baseline' && v.value && Array.isArray(v.value.items)) {
+            const kept = v.value.items.filter(memberAllowedWorkspace)
+            for (const w of kept) noteAllowedWorkspace(w)
+            v.value.items = kept
+          } else if (v.type === 'order' && Array.isArray(v.workspaceIds)) {
+            v.workspaceIds = v.workspaceIds.filter(function (id) { return allowedIds.has(String(id)) })
+          } else if (v.type === 'upsert' && v.workspace) {
+            if (!memberAllowedWorkspace(v.workspace)) return 'drop'
+            noteAllowedWorkspace(v.workspace)
+          } else {
+            return null
+          }
+        } catch (e) { return null }
+        return JSON.stringify(frame)
+      }
+      // 工厂式构造函数：非 mux 连接原样返回原生 WebSocket；mux 连接在实例上
+      // monkeypatch send/addEventListener/removeEventListener 做嗅探+过滤
+      function GuardedWebSocket(url, protocols) {
+        const ws = protocols === undefined ? new NativeWebSocket(url) : new NativeWebSocket(url, protocols)
+        if (!muxOf(url)) return ws
+        const streams = new Set()   // 本连接上的 workspace 流 streamId
+        const cbMap = new Map()     // 原回调 -> 包装回调，供 removeEventListener 命中
+        const nativeAdd = ws.addEventListener.bind(ws)
+        const nativeRemove = ws.removeEventListener.bind(ws)
+        ws.send = function (data) {
+          try {
+            if (wsFilterActive() && typeof data === 'string') {
+              let m
+              try { m = JSON.parse(data) } catch (e) { m = null }
+              if (m && m.type === 'open' && workspaceEndpoint(m.endpoint)) streams.add(String(m.streamId))
+              else if (m && m.type === 'cancel') streams.delete(String(m.streamId))
+            }
+          } catch (e) { }
+          return __origWsSend.call(ws, data)
+        }
+        ws.addEventListener = function (type, cb, opts) {
+          if (type === 'message' && typeof cb === 'function') {
+            const wrapped = function (ev) {
+              try {
+                if (wsFilterActive() && typeof ev.data === 'string') {
+                  const out = rewriteFrame(ev.data, streams)
+                  if (out === 'drop') return
+                  if (out !== null) return cb.call(ws, { type: 'message', data: out })
+                }
+              } catch (e) { }
+              return cb.call(ws, ev)
+            }
+            cbMap.set(cb, wrapped)
+            return nativeAdd(type, wrapped, opts)
+          }
+          return nativeAdd(type, cb, opts)
+        }
+        ws.removeEventListener = function (type, cb) {
+          const w = cbMap.get(cb); if (w) { cbMap.delete(cb); return nativeRemove(type, w) }
+          return nativeRemove(type, cb)
+        }
+        return ws
+      }
+      GuardedWebSocket.prototype = NativeWebSocket.prototype
+      GuardedWebSocket.CONNECTING = NativeWebSocket.CONNECTING
+      GuardedWebSocket.OPEN = NativeWebSocket.OPEN
+      GuardedWebSocket.CLOSING = NativeWebSocket.CLOSING
+      GuardedWebSocket.CLOSED = NativeWebSocket.CLOSED
+      window.WebSocket = GuardedWebSocket
     }
     function applyRoleClass() {
       if (PERMS && PERMS.role === 'member') document.documentElement.classList.add('wg-member')

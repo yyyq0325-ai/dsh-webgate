@@ -4,6 +4,27 @@
 
 所有值得关注的新功能与修复都记录在本文件里，**新版本在最上面**。安装与使用说明见 [README](README.md)。
 
+## 0.3.0 · 2026-09-10
+
+适配 DeepSeek Harness 0.1.5-alpha（含 alpha.2 → rc.1+）：成员工作区过滤在新传输层下重新生效。
+
+### 背景：alpha5 改了什么
+
+Harness alpha5 把工作区列表从「一次性 `POST /api/workspace.list`（HTTP fetch）」改成了 **WebSocket `/api/remote.mux` 上的订阅式投影流**（`@Remote({mode:'stream'}) workspace/follow`），Remote endpoint 也从点号（`workspace.create`）改为斜杠（`workspace/create`）。旧版守卫拦截的是 fetch 响应体，在新版下完全不命中——**member 能看到全部工作区**。
+
+### 修复
+
+- **`GuardedWebSocket`**：守卫新增一层 `window.WebSocket` 包装，仅拦截 `/api/remote.mux` 连接。通过嗅探上行 `open` 帧的 endpoint 识别 workspace 流的 `streamId`，改写下行帧——`baseline`（过滤 `value.items`）、`order`（过滤 `workspaceIds`）、`upsert`（非授权整帧丢弃）。遵守帧协议的 `exactKeys` 校验：只改 `value` 内部，顶层键集不变，否则客户端会 `close(4002)` 断链。非 mux 连接、admin 账号一律原样透传
+- **RPC 方法名归一化**：`workspace/create` ↔ `workspace.create` 统一为点号匹配，`DENY_METHODS`（设置域 / `workspace.create` / `session.search` / `host.createDirectory`）与 `ID_GUARD_METHODS`（携带 `workspaceId` 的变更）两版通吃
+- **RPC URL 归一化**：`/api/session/list` ↔ `/api/session.list` 统一为点号匹配，会话列表过滤（按 `cwd` 与已授权 `sessionIds`）在 alpha5 上恢复生效
+
+### 诚实说明（务必阅读）
+
+- **这仍是浏览器端过滤，不是安全边界**：未授权工作区的完整数据仍会到达浏览器（WebSocket 帧里），只是 UI 不再展示；懂 DevTools 的用户可以直读原始帧绕过。守卫的定位是「防误触」，与 README 安全边界的声明一致。真正的 per-user 服务端过滤需要 Harness 上游支持（已在本仓库 `docs/upstream-webserver-request-waterfall.md` 草拟提案），或自建反代改造
+- **endpoint 匹配是启发式的**：workspace 流靠 open 帧 endpoint 含 `workspace` 识别（`/workspace/i`）。若上游未来引入其他含 `workspace` 字样的流式 endpoint，该流也会被过滤——以当前 alpha5 已知端点为准是安全的
+- **旧版 DSH（0.1.1-rc.2 等）完全不受影响**：所有归一化都是"先归一再匹配旧形状"，旧路径逐字不变；WS 过滤只在 mux 连接上激活
+- alpha5 自带的启动 token 门（`?token=…` + `dsh-auth-*` Cookie）与 WebGate 叠加生效，互不冲突；WebGate 在其上提供多用户、角色与工作区授权
+
 ## 0.2.2 · 2026-08-24
 
 服务端强制鉴权落地：反向代理配置模板 + 会话校验端点。
