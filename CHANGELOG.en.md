@@ -4,6 +4,27 @@ English | [中文](CHANGELOG.zh.md)
 
 Every notable feature and fix lands here, **newest first**. See the [README](README_EN.md) for install and usage.
 
+## 0.3.0 · 2026-09-10
+
+Adapt to DeepSeek Harness 0.1.5-alpha (alpha.2 → rc.1+): member workspace filtering works again under the new transport.
+
+### Background: what alpha5 changed
+
+Harness alpha5 turned the workspace list from a one-shot `POST /api/workspace.list` (HTTP fetch) into a **subscription projection stream over the WebSocket `/api/remote.mux`** (`@Remote({mode:'stream'}) workspace/follow`), and Remote endpoints switched from dotted (`workspace.create`) to slashed (`workspace/create`). The old guard intercepted fetch response bodies, which no longer match — **members saw every workspace**.
+
+### Fixed
+
+- **`GuardedWebSocket`**: the guard now also wraps `window.WebSocket`, intercepting only `/api/remote.mux` connections. It sniffs upstream `open` frames to identify workspace streams by `streamId`, then rewrites downstream frames — `baseline` (filter `value.items`), `order` (filter `workspaceIds`), `upsert` (drop the entire frame when unauthorized). It honors the frame protocol's `exactKeys` validation: only `value` internals change, top-level key sets stay untouched, otherwise the client would `close(4002)`. Non-mux connections and admin accounts pass through untouched
+- **RPC method-name normalization**: `workspace/create` ↔ `workspace.create` both normalize to the dotted form, so `DENY_METHODS` (settings / `workspace.create` / `session.search` / `host.createDirectory`) and `ID_GUARD_METHODS` (workspaceId-carrying mutations) work on both versions
+- **RPC URL normalization**: `/api/session/list` ↔ `/api/session.list` both normalize to the dotted form, restoring session-list filtering (by `cwd` and granted `sessionIds`) on alpha5
+
+### Honest notes (please read)
+
+- **This is still browser-side filtering, not a security boundary**: the full workspace data still reaches the browser (inside WebSocket frames); the UI merely stops showing it. A user fluent in DevTools can read the raw frames. The guard's positioning remains "mistake-proofing", consistent with the README security notes. True per-user server-side filtering requires Harness upstream support (drafted in `docs/upstream-webserver-request-waterfall.md`) or a custom reverse proxy
+- **Endpoint matching is heuristic**: workspace streams are identified by the open frame's endpoint containing `workspace` (`/workspace/i`). If upstream later introduces other stream endpoints containing that word, they would be filtered too — safe against the current known alpha5 endpoints
+- **Older DSH versions (0.1.1-rc.2 etc.) are unaffected**: all normalizations normalize first and then match the old shape verbatim; WS filtering only activates on mux connections
+- alpha5's built-in launch-token gate (`?token=…` + `dsh-auth-*` Cookie) and WebGate stack without conflict; WebGate adds multi-user accounts, roles, and workspace grants on top
+
 ## 0.2.2 · 2026-08-24
 
 Server-side enforcement: reverse-proxy config templates + a session verify endpoint.

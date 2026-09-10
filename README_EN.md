@@ -156,6 +156,11 @@ This is an entry gate for a **local personal tool**, not enterprise security. Th
 2. The server binds `127.0.0.1` by default. If you expose it to a LAN or the public internet, put your own authenticating reverse proxy (or similar) in front for real server-side enforcement.
 3. The initial admin password is public — change it first thing.
 4. Tokens live in browser localStorage and host memory only; a host restart requires re-login. A `webgate_token` Cookie (SameSite=Lax) is also issued at login, reserving a channel for future gateway-level validation.
+5. **About member workspace filtering on Harness 0.1.5-alpha — know its limits**:
+   - alpha5 moved the workspace list onto a WebSocket subscription stream (`/api/remote.mux`). The guard now wraps WebSocket and rewrites frame data in the browser so a member's UI only shows granted workspaces;
+   - **but the full data of ungranted workspaces still reaches the browser** — filtering happens at the UI layer; a user fluent in DevTools can read the raw WebSocket frames and see everything. This is the same nature as the old fetch filtering: "mistake-proofing", not adversarial protection;
+   - workspace streams are identified heuristically by the open frame's endpoint containing `workspace`; if upstream later adds other stream endpoints containing that word, they would be filtered the same way;
+   - true per-user server-side filtering needs an upstream gateway-auth hook or request middleware (drafted in `docs/upstream-webserver-request-waterfall.md`) — help push that or send PRs if you can.
 
 > 🤝 **PRs welcome**: the server-side enforcement gap in point 1 cannot be closed by a browser-side guard alone — it needs either an upstream request-middleware/gateway hook in Harness or a better in-process design from the community. If you have ideas (improvements to this plugin or suggestions upstream), issues and pull requests are welcome!
 
